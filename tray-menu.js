@@ -11,42 +11,42 @@ module.exports = {
             {
                 label: 'AaravPOS Print Agent',
                 enabled: false,
-                icon: isRunning ? 'assets/icon-online.png' : 'assets/icon-offline.png'
+                // icon: isRunning ? 'assets/icon-online.png' : 'assets/icon-offline.png'
             },
             { type: 'separator' },
             {
                 label: `Status: ${isRunning ? '✅ Running' : '❌ Stopped'}`,
                 enabled: false,
-                icon: isRunning ? 'assets/checkmark.png' : 'assets/error.png'
+                // icon: isRunning ? 'assets/checkmark.png' : 'assets/error.png'
             },
             {
                 label: `Port: ${port}`,
                 enabled: false,
-                icon: 'assets/port.png'
+                // icon: 'assets/port.png'
             },
             {
                 label: `Connections: ${connections}`,
                 enabled: false,
-                icon: connections > 0 ? 'assets/connected.png' : 'assets/disconnected.png'
+                // icon: connections > 0 ? 'assets/connected.png' : 'assets/disconnected.png'
             },
             { type: 'separator' },
             {
                 label: 'Show Status Window',
                 click: onShowStatus,
-                icon: 'assets/window.png',
+                // icon: 'assets/window.png',
                 accelerator: process.platform === 'darwin' ? 'Cmd+S' : 'Ctrl+S'
             },
             {
                 label: 'View Logs',
                 click: onShowLogs,
-                icon: 'assets/logs.png',
+                // icon: 'assets/logs.png',
                 accelerator: process.platform === 'darwin' ? 'Cmd+L' : 'Ctrl+L'
             },
             { type: 'separator' },
             {
                 label: 'Restart Server',
                 click: onRestart,
-                icon: 'assets/restart.png',
+                // icon: 'assets/restart.png',
                 enabled: isRunning,
                 accelerator: process.platform === 'darwin' ? 'Cmd+R' : 'Ctrl+R'
             },
@@ -86,7 +86,7 @@ module.exports = {
             {
                 label: 'Quit',
                 click: onQuit,
-                icon: 'assets/quit.png',
+                // icon: 'assets/quit.png',
                 accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Alt+F4'
             }
         ];
