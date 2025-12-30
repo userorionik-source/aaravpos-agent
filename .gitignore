@@ -2,4 +2,14 @@ node_modules
 package-lock.json
 package.json
 README.md
+<<<<<<< HEAD
 dist
+=======
+dist
+downloads/
+Releases/
+*.exe
+*.AppImage
+*.deb
+*.dmg
+>>>>>>> 859bf82 (Remove downloads folder from git tracking)
