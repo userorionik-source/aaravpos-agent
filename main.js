@@ -1,16 +1,15 @@
-// main.js - UPDATED WITH FULL OPTIONAL FILE INTEGRATION
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const PrintServer = require('./print-server.js');
-const TrayMenu = require('./tray-menu.js'); // Using the tray-menu module
+const TrayMenu = require('./tray-menu.js');
 
 // Configuration
 const config = {
     appName: 'AaravPOS Agent',
     appId: 'com.aaravpos.agent',
-    port: 9988,
+    port: 9978,
     autoStart: true,
     showStatusWindowOnStart: false
 };
@@ -20,6 +19,17 @@ let tray = null;
 let printServer = null;
 let isQuitting = false;
 let statusWindow = null;
+
+// Get the correct resource path (works in both dev and production)
+function getResourcePath(relativePath) {
+    if (app.isPackaged) {
+        // In production, resources are in the unpacked asar
+        return path.join(process.resourcesPath, relativePath);
+    } else {
+        // In development
+        return path.join(__dirname, relativePath);
+    }
+}
 
 // Create logs directory
 const logsDir = path.join(app.getPath('userData'), 'logs');
@@ -36,8 +46,38 @@ if (!gotTheLock) {
 
 app.setAppUserModelId(config.appId);
 
+// Get platform-specific icon path with fallback
+function getIconPath() {
+    let iconName;
+    
+    if (process.platform === 'win32') {
+        iconName = 'icon.ico';
+    } else if (process.platform === 'darwin') {
+        iconName = 'icon.icns';
+    } else {
+        iconName = 'icon.png';
+    }
+    
+    const iconPath = getResourcePath(path.join('assets', iconName));
+    
+    // Check if icon exists, if not use PNG as fallback
+    if (!fsSync.existsSync(iconPath)) {
+        console.warn(`Icon not found at ${iconPath}, trying PNG fallback`);
+        const pngPath = getResourcePath(path.join('assets', 'icon.png'));
+        if (fsSync.existsSync(pngPath)) {
+            return pngPath;
+        }
+        console.error('No icon files found in assets directory');
+        return null;
+    }
+    
+    return iconPath;
+}
+
 // Create main window (hidden)
 async function createMainWindow() {
+    const iconPath = getIconPath();
+    
     mainWindow = new BrowserWindow({
         width: 800,
         height: 600,
@@ -47,16 +87,15 @@ async function createMainWindow() {
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js')
         },
-        icon: getIconPath(),
+        icon: iconPath,
         title: config.appName
     });
 
-    // Load status page if it exists, otherwise create default
+    // Load status page
     const statusPagePath = path.join(__dirname, 'status.html');
     if (fsSync.existsSync(statusPagePath)) {
         await mainWindow.loadFile(statusPagePath);
     } else {
-        // Create default status page
         const defaultStatusHtml = createDefaultStatusPage();
         mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(defaultStatusHtml)}`);
     }
@@ -68,36 +107,75 @@ async function createMainWindow() {
         }
     });
 
-    // IPC handlers for status window communication
     setupIpcHandlers();
 }
 
-// Create system tray with menu
+// Create system tray with proper icon handling
 function createTray() {
-    const icon = nativeImage.createFromPath(getIconPath());
-    tray = new Tray(icon);
-
-    // Initial menu
-    updateTrayMenu();
-
-    // Update tray menu every 5 seconds
-    setInterval(updateTrayMenu, 5000);
-
-    // Double click on tray shows status window (Windows)
-    if (process.platform === 'win32') {
-        tray.on('double-click', () => {
-            showStatusWindow();
-        });
+    const iconPath = getIconPath();
+    
+    if (!iconPath) {
+        console.error('Cannot create tray: no icon available');
+        dialog.showErrorBox(
+            'Icon Missing',
+            'Tray icon files are missing. Please reinstall the application.'
+        );
+        return;
     }
-
-    // Single click shows menu (macOS/Linux)
-    if (process.platform === 'darwin' || process.platform === 'linux') {
-        tray.on('click', () => {
-            tray.popUpContextMenu();
-        });
+    
+    try {
+        const icon = nativeImage.createFromPath(iconPath);
+        
+        if (icon.isEmpty()) {
+            console.error('Icon is empty or invalid:', iconPath);
+            return;
+        }
+        
+        // Resize icon for tray (platform-specific sizes)
+        let resizedIcon = icon;
+        if (process.platform === 'win32') {
+            resizedIcon = icon.resize({ width: 16, height: 16 });
+        } else if (process.platform === 'darwin') {
+            resizedIcon = icon.resize({ width: 22, height: 22 });
+        } else {
+            resizedIcon = icon.resize({ width: 22, height: 22 });
+        }
+        
+        tray = new Tray(resizedIcon);
+        tray.setToolTip(config.appName);
+        
+        // Initial menu
+        updateTrayMenu();
+        
+        // Update tray menu every 5 seconds
+        setInterval(updateTrayMenu, 5000);
+        
+        // Platform-specific click handlers
+        if (process.platform === 'win32') {
+            tray.on('double-click', () => {
+                showStatusWindow();
+            });
+            tray.on('click', () => {
+                tray.popUpContextMenu();
+            });
+        } else if (process.platform === 'darwin') {
+            tray.on('click', () => {
+                tray.popUpContextMenu();
+            });
+        } else {
+            tray.on('click', () => {
+                tray.popUpContextMenu();
+            });
+        }
+        
+        console.log('Tray icon created successfully');
+    } catch (error) {
+        console.error('Error creating tray icon:', error);
+        dialog.showErrorBox(
+            'Tray Icon Error',
+            `Failed to create tray icon: ${error.message}`
+        );
     }
-
-    tray.setToolTip(config.appName);
 }
 
 // Update tray menu with current status
@@ -125,25 +203,9 @@ function updateTrayMenu() {
     const contextMenu = Menu.buildFromTemplate(menuTemplate);
     tray.setContextMenu(contextMenu);
 
-    // Update tray icon based on status
-    updateTrayIcon(status.isRunning);
-}
-
-// Update tray icon color based on status
-function updateTrayIcon(isRunning) {
-    try {
-        const iconPath = getIconPath();
-        const icon = nativeImage.createFromPath(iconPath);
-
-        // On Windows/macOS, we can add a badge or change icon
-        if (process.platform === 'darwin') {
-            // macOS: Update tooltip with status
-            tray.setTitle(isRunning ? '●' : '○');
-        }
-
-        tray.setImage(icon);
-    } catch (error) {
-        console.error('Error updating tray icon:', error);
+    // Update tray icon status indicator (macOS)
+    if (process.platform === 'darwin') {
+        tray.setTitle(status.isRunning ? '●' : '○');
     }
 }
 
@@ -157,10 +219,8 @@ async function showLogs() {
         const { shell } = require('electron');
         shell.openPath(logPath).catch(console.error);
     } catch (error) {
-        // Create a new log file if it doesn't exist
         const logContent = `${new Date().toISOString()} - Log file created\n`;
         await fs.writeFile(logPath, logContent, { flag: 'a' });
-
         const { shell } = require('electron');
         shell.openPath(logPath).catch(console.error);
     }
@@ -207,7 +267,6 @@ async function startPrintServer() {
         await printServer.start();
         console.log('Print server started successfully');
 
-        // Write startup log
         const startupLog = `${new Date().toISOString()} - ${config.appName} started on port ${config.port}\n`;
         const logPath = path.join(logsDir, 'aaravpos-agent.log');
         await fs.writeFile(logPath, startupLog, { flag: 'a' });
@@ -215,7 +274,6 @@ async function startPrintServer() {
     } catch (error) {
         console.error('Failed to start print server:', error);
 
-        // Show error dialog
         if (mainWindow && mainWindow.isVisible()) {
             dialog.showErrorBox(
                 'Server Error',
@@ -223,7 +281,6 @@ async function startPrintServer() {
             );
         }
 
-        // Try again after 10 seconds
         setTimeout(startPrintServer, 10000);
     }
 }
@@ -254,25 +311,17 @@ function setupIpcHandlers() {
             return 'No logs available';
         }
     });
+    
+    ipcMain.handle('hide-window', () => {
+        if (mainWindow) {
+            mainWindow.hide();
+        }
+    });
 }
 
-// Get platform-specific icon path
-function getIconPath() {
-    const iconDir = path.join(__dirname, 'assets');
-
-    if (process.platform === 'win32') {
-        return path.join(iconDir, 'icon.ico');
-    } else if (process.platform === 'darwin') {
-        return path.join(iconDir, 'icon.icns');
-    } else {
-        return path.join(iconDir, 'icon.png');
-    }
-}
-
-// Create default status page if status.html doesn't exist
+// Create default status page
 function createDefaultStatusPage() {
-    return `
-<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -285,10 +334,7 @@ function createDefaultStatusPage() {
             min-height: 100vh;
             margin: 0;
         }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-        }
+        .container { max-width: 800px; margin: 0 auto; }
         .status-card {
             background: white;
             border-radius: 16px;
@@ -296,17 +342,8 @@ function createDefaultStatusPage() {
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             margin-top: 20px;
         }
-        h1 {
-            color: white;
-            text-align: center;
-            margin-top: 50px;
-            font-size: 2.5em;
-        }
-        .status-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 30px;
-        }
+        h1 { color: white; text-align: center; margin-top: 50px; font-size: 2.5em; }
+        .status-header { display: flex; align-items: center; margin-bottom: 30px; }
         .status-indicator {
             width: 20px;
             height: 20px;
@@ -322,20 +359,9 @@ function createDefaultStatusPage() {
             border-radius: 8px;
             border-left: 4px solid #667eea;
         }
-        .status-label {
-            font-weight: 600;
-            color: #555;
-            display: inline-block;
-            width: 140px;
-        }
-        .status-value {
-            color: #222;
-        }
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
+        .status-label { font-weight: 600; color: #555; display: inline-block; width: 140px; }
+        .status-value { color: #222; }
+        .button-group { display: flex; gap: 10px; margin-top: 20px; }
         button {
             padding: 12px 24px;
             border: none;
@@ -347,29 +373,9 @@ function createDefaultStatusPage() {
             transition: all 0.3s;
             flex: 1;
         }
-        button:hover {
-            background: #764ba2;
-            transform: translateY(-2px);
-        }
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        .log-display {
-            background: #1a1a1a;
-            color: #00ff00;
-            padding: 15px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            height: 200px;
-            overflow-y: auto;
-            margin-top: 20px;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
+        button:hover { background: #764ba2; transform: translateY(-2px); }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
 </head>
 <body>
@@ -380,40 +386,25 @@ function createDefaultStatusPage() {
                 <div class="status-indicator" id="statusIndicator"></div>
                 <h2 style="margin: 0;">Agent Status</h2>
             </div>
-            
             <div class="status-item">
                 <span class="status-label">WebSocket Server:</span>
                 <span class="status-value" id="wsStatus">Checking...</span>
             </div>
-            
             <div class="status-item">
                 <span class="status-label">Port:</span>
                 <span class="status-value" id="portValue">${config.port}</span>
             </div>
-            
             <div class="status-item">
                 <span class="status-label">Connections:</span>
                 <span class="status-value" id="connectionsValue">0</span>
             </div>
-            
-            <div class="status-item">
-                <span class="status-label">Token:</span>
-                <span class="status-value">supersecret</span>
-            </div>
-            
             <div class="button-group">
                 <button onclick="refreshStatus()">🔄 Refresh</button>
-                <button onclick="restartServer()">🔄 Restart</button>
-                <button onclick="viewLogs()">📋 View Logs</button>
+                <button onclick="restartServer()">🔁 Restart</button>
                 <button onclick="hideWindow()">👇 Hide</button>
-            </div>
-            
-            <div id="logDisplay" class="log-display" style="display: none;">
-                <div id="logContent"></div>
             </div>
         </div>
     </div>
-
     <script>
         async function refreshStatus() {
             try {
@@ -423,55 +414,29 @@ function createDefaultStatusPage() {
                 console.error('Error refreshing status:', error);
             }
         }
-
         async function restartServer() {
             const button = event.target;
             button.disabled = true;
             button.textContent = 'Restarting...';
-            
             try {
-                const result = await window.electron.restartServer();
-                if (result.success) {
-                    setTimeout(refreshStatus, 2000);
-                }
+                await window.electron.restartServer();
+                setTimeout(refreshStatus, 2000);
             } catch (error) {
                 console.error('Error restarting:', error);
             } finally {
                 setTimeout(() => {
                     button.disabled = false;
-                    button.textContent = '🔄 Restart';
+                    button.textContent = '🔁 Restart';
                 }, 3000);
             }
         }
-
-        async function viewLogs() {
-            const logDisplay = document.getElementById('logDisplay');
-            const logContent = document.getElementById('logContent');
-            
-            if (logDisplay.style.display === 'none') {
-                try {
-                    const logs = await window.electron.getLogs();
-                    logContent.textContent = logs;
-                    logDisplay.style.display = 'block';
-                    logDisplay.scrollTop = logDisplay.scrollHeight;
-                } catch (error) {
-                    logContent.textContent = 'Error loading logs';
-                    logDisplay.style.display = 'block';
-                }
-            } else {
-                logDisplay.style.display = 'none';
-            }
-        }
-
         function hideWindow() {
             window.electron.hideWindow();
         }
-
         function updateStatusUI(status) {
             const indicator = document.getElementById('statusIndicator');
             const wsStatus = document.getElementById('wsStatus');
             const connections = document.getElementById('connectionsValue');
-            
             if (status.isRunning) {
                 indicator.className = 'status-indicator running';
                 wsStatus.textContent = 'Running 🟢';
@@ -481,17 +446,13 @@ function createDefaultStatusPage() {
                 wsStatus.textContent = 'Stopped 🔴';
                 wsStatus.style.color = '#f44336';
             }
-            
             connections.textContent = status.connections || 0;
         }
-
-        // Initial load and auto-refresh every 3 seconds
         refreshStatus();
         setInterval(refreshStatus, 3000);
     </script>
 </body>
-</html>
-  `;
+</html>`;
 }
 
 // App lifecycle
@@ -500,7 +461,6 @@ app.whenReady().then(async () => {
     createTray();
     await startPrintServer();
 
-    // Auto-start on login
     if (config.autoStart) {
         app.setLoginItemSettings({
             openAtLogin: true,
@@ -526,7 +486,6 @@ app.on('before-quit', async () => {
     }
 });
 
-// Prevent app from quitting when window is closed
 app.on('window-all-closed', (event) => {
     if (process.platform !== 'darwin') {
         event.preventDefault();
