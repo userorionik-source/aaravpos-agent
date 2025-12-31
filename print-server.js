@@ -1,18 +1,29 @@
-// print-server.js - UPDATED VERSION
+// print-server.js - macOS OPTIMIZED VERSION
 const WebSocket = require('ws');
 const os = require('os');
 const fs = require('fs');
 const { exec } = require('child_process');
 const path = require('path');
-const crypto = require('crypto');
 
 class PrintServer {
     constructor() {
-        this.PORT = 9978; // Changed from 9978 to avoid conflicts
+        this.PORT = 9978;
         this.AUTH_TOKEN = 'supersecret';
         this.wss = null;
         this.server = null;
-        this.logPath = path.join(os.tmpdir(), 'aaravpos-print-server.log');
+        
+        // macOS-specific log location
+        const homeDir = os.homedir();
+        if (os.platform() === 'darwin') {
+            this.logPath = path.join(homeDir, 'Library', 'Logs', 'AaravPOS', 'agent.log');
+            // Create log directory if it doesn't exist
+            const logDir = path.dirname(this.logPath);
+            if (!fs.existsSync(logDir)) {
+                fs.mkdirSync(logDir, { recursive: true });
+            }
+        } else {
+            this.logPath = path.join(os.tmpdir(), 'aaravpos-print-server.log');
+        }
     }
 
     log(message) {
@@ -20,8 +31,11 @@ class PrintServer {
         const logMessage = `[${timestamp}] ${message}\n`;
         console.log(logMessage.trim());
 
-        // Append to log file
-        fs.appendFileSync(this.logPath, logMessage, { flag: 'a' });
+        try {
+            fs.appendFileSync(this.logPath, logMessage, { flag: 'a' });
+        } catch (error) {
+            console.error('Failed to write log:', error.message);
+        }
     }
 
     /* ============================
@@ -34,7 +48,7 @@ class PrintServer {
         const FEED_AND_CUT = Buffer.from([LF, LF, LF, LF, ESC, 0x69]);
 
         const parts = [
-            Buffer.from(text, 'ascii'),
+            Buffer.from(text, 'utf8'), // Changed to utf8 for better character support
             Buffer.from([LF, LF])
         ];
 
@@ -47,7 +61,7 @@ class PrintServer {
     }
 
     /* ============================
-       PRINT ROUTER
+       macOS PRINT ROUTER
     ============================ */
     printRaw(printerName, buffer) {
         return new Promise((resolve, reject) => {
@@ -57,34 +71,49 @@ class PrintServer {
 
             fs.writeFile(tempFile, buffer, (err) => {
                 if (err) {
+                    this.log(`Failed to write temp file: ${err.message}`);
                     reject(err);
                     return;
                 }
 
                 let command;
+                
                 if (platform === 'darwin') {
-                    command = `lp -d "${printerName}" -o raw "${tempFile}"`;
+                    // macOS-specific command with better error handling
+                    // Use lpr for raw printing on macOS
+                    command = `lpr -P "${printerName}" -o raw "${tempFile}"`;
+                    
+                    // Alternative for non-raw printers
+                    // command = `cat "${tempFile}" | lp -d "${printerName}" -o raw -`;
                 } else if (platform === 'linux') {
                     command = `lp -d "${printerName}" -o raw "${tempFile}"`;
                 } else if (platform === 'win32') {
-                    // Escape backslashes for Windows
                     const escapedFile = tempFile.replace(/\\/g, '\\\\');
                     const escapedPrinter = printerName.replace(/\\/g, '\\\\');
                     command = `copy /b "${escapedFile}" "\\\\localhost\\${escapedPrinter}"`;
                 } else {
+                    fs.unlinkSync(tempFile);
                     reject(new Error(`Unsupported platform: ${platform}`));
                     return;
                 }
 
-                exec(command, (error, stdout, stderr) => {
+                this.log(`Executing print command: ${command}`);
+
+                exec(command, { timeout: 10000 }, (error, stdout, stderr) => {
                     // Clean up temp file
-                    fs.unlink(tempFile, () => { });
+                    try {
+                        fs.unlinkSync(tempFile);
+                    } catch (cleanupError) {
+                        this.log(`Warning: Failed to cleanup temp file: ${cleanupError.message}`);
+                    }
 
                     if (error) {
                         this.log(`Print error: ${error.message}`);
+                        if (stderr) this.log(`stderr: ${stderr}`);
                         reject(error);
                     } else {
-                        this.log(`Printed to ${printerName}`);
+                        this.log(`Successfully printed to ${printerName}`);
+                        if (stdout) this.log(`stdout: ${stdout}`);
                         resolve(stdout);
                     }
                 });
@@ -93,101 +122,164 @@ class PrintServer {
     }
 
     /* ============================
-       PRINTER DISCOVERY
+       macOS PRINTER DISCOVERY
     ============================ */
     getPrinters() {
         return new Promise((resolve, reject) => {
             const platform = os.platform();
-            let command;
 
-            if (platform === 'win32') {
-                command = 'wmic printer get Name,Default';
-            } else if (platform === 'darwin') {
-                command = 'lpstat -p -d';
+            if (platform === 'darwin') {
+                // macOS printer discovery
+                this.getMacOSPrinters()
+                    .then(resolve)
+                    .catch(error => {
+                        this.log(`Printer discovery error: ${error.message}`);
+                        resolve([]);
+                    });
             } else if (platform === 'linux') {
-                command = 'lpstat -p -d';
+                this.getLinuxPrinters()
+                    .then(resolve)
+                    .catch(error => {
+                        this.log(`Printer discovery error: ${error.message}`);
+                        resolve([]);
+                    });
+            } else if (platform === 'win32') {
+                this.getWindowsPrinters()
+                    .then(resolve)
+                    .catch(error => {
+                        this.log(`Printer discovery error: ${error.message}`);
+                        resolve([]);
+                    });
             } else {
                 resolve([]);
-                return;
             }
+        });
+    }
 
-            exec(command, (error, stdout, stderr) => {
-                if (error) {
-                    this.log(`Printer discovery error: ${error.message}`);
-                    resolve([]);
-                    return;
+    getMacOSPrinters() {
+        return new Promise((resolve, reject) => {
+            // First get the default printer
+            exec('lpstat -d', (err, defaultOutput) => {
+                let defaultPrinter = null;
+                if (!err && defaultOutput) {
+                    const match = defaultOutput.match(/system default destination:\s*(\S+)/i);
+                    defaultPrinter = match ? match[1] : null;
                 }
 
+                // Then get all printers with their status
+                exec('lpstat -p', (error, stdout, stderr) => {
+                    if (error) {
+                        this.log(`lpstat error: ${error.message}`);
+                        return reject(error);
+                    }
+
+                    const printers = [];
+                    const lines = stdout.split('\n');
+
+                    lines.forEach(line => {
+                        if (line.startsWith('printer ')) {
+                            // Example line: "printer HP_LaserJet is idle.  enabled since ..."
+                            const parts = line.split(' ');
+                            const name = parts[1];
+                            
+                            // Determine status
+                            let status = 'OFFLINE';
+                            if (line.includes('idle') || line.includes('enabled')) {
+                                status = 'READY';
+                            } else if (line.includes('disabled')) {
+                                status = 'OFFLINE';
+                            } else if (line.includes('printing')) {
+                                status = 'PRINTING';
+                            }
+
+                            printers.push({
+                                name: name,
+                                isDefault: name === defaultPrinter,
+                                status: status,
+                                isConnected: status !== 'OFFLINE'
+                            });
+                        }
+                    });
+
+                    this.log(`Found ${printers.length} printer(s) on macOS`);
+                    resolve(printers);
+                });
+            });
+        });
+    }
+
+    getLinuxPrinters() {
+        return new Promise((resolve, reject) => {
+            exec('lpstat -d', (err, defaultOutput) => {
+                let defaultPrinter = null;
+                if (!err && defaultOutput) {
+                    const match = defaultOutput.match(/system default destination:\s*(\S+)/i);
+                    defaultPrinter = match ? match[1] : null;
+                }
+
+                exec('lpstat -p', (error, stdout, stderr) => {
+                    if (error) {
+                        return reject(error);
+                    }
+
+                    const printers = [];
+                    const lines = stdout.split('\n');
+
+                    lines.forEach(line => {
+                        if (line.startsWith('printer ')) {
+                            const parts = line.split(' ');
+                            const name = parts[1];
+                            
+                            let status = 'OFFLINE';
+                            if (line.includes('idle') || line.includes('enabled')) {
+                                status = 'READY';
+                            }
+
+                            printers.push({
+                                name: name,
+                                isDefault: name === defaultPrinter,
+                                status: status,
+                                isConnected: status !== 'OFFLINE'
+                            });
+                        }
+                    });
+
+                    resolve(printers);
+                });
+            });
+        });
+    }
+
+    getWindowsPrinters() {
+        return new Promise((resolve, reject) => {
+            exec('wmic printer get Name,Default /FORMAT:CSV', (error, stdout) => {
+                if (error) {
+                    return reject(error);
+                }
+
+                const lines = stdout.split('\n').slice(1);
                 const printers = [];
 
-                if (platform === 'win32') {
-                    exec(
-                        'wmic printer get Name,Default /FORMAT:CSV',
-                        (error, stdout) => {
-                            if (error) {
-                                this.log(`Printer discovery error: ${error.message}`);
-                                return resolve([]);
-                            }
+                for (const line of lines) {
+                    if (!line.trim()) continue;
 
-                            const lines = stdout.split('\n').slice(1);
-                            const printers = [];
+                    const parts = line.split(',');
+                    if (parts.length < 3) continue;
 
-                            for (const line of lines) {
-                                if (!line.trim()) continue;
+                    const isDefault = parts[1].trim().toUpperCase() === 'TRUE';
+                    const name = parts.slice(2).join(',').trim();
 
-                                // CSV format:
-                                // Node,Default,Name
-                                const parts = line.split(',');
+                    if (!name) continue;
 
-                                if (parts.length < 3) continue;
-
-                                const isDefault = parts[1].trim().toUpperCase() === 'TRUE';
-                                const name = parts.slice(2).join(',').trim(); // SAFE even if name has commas
-
-                                if (!name) continue;
-
-                                printers.push({
-                                    name,
-                                    isDefault,
-                                    status: 'READY',
-                                    isConnected: true
-                                });
-                            }
-
-                            resolve(printers);
-                        }
-                    );
-                    return;
-                } else {
-                    // Parse macOS/Linux lpstat output
-                    const lines = stdout.split('\n');
-                    let defaultPrinter = null;
-
-                    // Find default printer
-                    exec('lpstat -d', (err, out) => {
-                        if (!err && out) {
-                            const match = out.match(/system default destination:\s*(\S+)/i);
-                            defaultPrinter = match ? match[1] : null;
-                        }
-
-                        lines.forEach(line => {
-                            if (line.startsWith('printer ')) {
-                                const name = line.split(' ')[1];
-                                printers.push({
-                                    name: name,
-                                    isDefault: name === defaultPrinter,
-                                    status: line.includes('enabled') ? 'READY' : 'OFFLINE'
-                                });
-                            }
-                        });
-
-                        resolve(printers);
+                    printers.push({
+                        name,
+                        isDefault,
+                        status: 'READY',
+                        isConnected: true
                     });
                 }
 
-                if (platform === 'win32') {
-                    resolve(printers);
-                }
+                resolve(printers);
             });
         });
     }
@@ -200,11 +292,12 @@ class PrintServer {
             try {
                 this.wss = new WebSocket.Server({
                     port: this.PORT,
-                    host: '127.0.0.1' // Changed to localhost only for security
+                    host: '127.0.0.1'
                 });
 
                 this.wss.on('connection', (ws, req) => {
-                    this.log(`New connection from: ${req.socket.remoteAddress}`);
+                    const clientIp = req.socket.remoteAddress;
+                    this.log(`New connection from: ${clientIp}`);
 
                     // Extract token from URL
                     const url = req.url;
@@ -212,7 +305,7 @@ class PrintServer {
                     const token = params.get('token');
 
                     if (token !== this.AUTH_TOKEN) {
-                        this.log(`Invalid token from ${req.socket.remoteAddress}`);
+                        this.log(`❌ Invalid token from ${clientIp}`);
                         ws.close();
                         return;
                     }
@@ -220,13 +313,17 @@ class PrintServer {
                     // Send welcome message
                     ws.send(JSON.stringify({
                         type: 'connected',
-                        payload: { message: 'AaravPOS Print Server Connected' }
+                        payload: { 
+                            message: 'AaravPOS Print Server Connected',
+                            platform: os.platform(),
+                            version: '1.0.0'
+                        }
                     }));
 
                     ws.on('message', async (msg) => {
                         try {
                             const data = JSON.parse(msg);
-                            this.log(`Received: ${data.type} (${data.requestId || 'no-id'})`);
+                            this.log(`📨 Received: ${data.type} (${data.requestId || 'no-id'})`);
 
                             switch (data.type) {
                                 case 'health':
@@ -237,6 +334,8 @@ class PrintServer {
                                         payload: {
                                             ok: true,
                                             platform: os.platform(),
+                                            version: '1.0.0',
+                                            hostname: os.hostname(),
                                             printers: printers,
                                             totalPrinters: printers.length,
                                             defaultPrinter: printers.find(p => p.isDefault)?.name || null
@@ -253,7 +352,7 @@ class PrintServer {
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: `Printed to ${data.payload.printerName}`
+                                                message: `✅ Printed to ${data.payload.printerName}`
                                             }
                                         }));
                                     } catch (error) {
@@ -262,24 +361,30 @@ class PrintServer {
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `Print failed: ${error.message}`
+                                                message: `❌ Print failed: ${error.message}`
                                             }
                                         }));
                                     }
                                     break;
 
                                 case 'test_print':
-                                    const TEST_RECEIPT = `AARAVPOS AGENT TEST PRINT
-================================
-Date: ${new Date().toLocaleString()}
-Agent Version: 1.0.0
-Platform: ${os.platform()}
-================================
-This is a test from the Electron
-agent running on your computer.
-================================
-            SUCCESS!
-================================`;
+                                    const TEST_RECEIPT = `
+╔════════════════════════════════════╗
+║   AARAVPOS AGENT TEST PRINT       ║
+╠════════════════════════════════════╣
+║ Date: ${new Date().toLocaleString().padEnd(26)} ║
+║ Agent Version: 1.0.0 (macOS)      ║
+║ Platform: ${os.platform().padEnd(23)} ║
+║ Hostname: ${os.hostname().substring(0, 23).padEnd(23)} ║
+╠════════════════════════════════════╣
+║ This is a test print from the     ║
+║ Electron agent running on your    ║
+║ computer.                          ║
+╠════════════════════════════════════╣
+║           ✅ SUCCESS!              ║
+╚════════════════════════════════════╝
+
+`;
 
                                     try {
                                         const buffer = this.buildBuffer(TEST_RECEIPT, false);
@@ -289,7 +394,7 @@ agent running on your computer.
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: 'Test print sent successfully'
+                                                message: '✅ Test print sent successfully'
                                             }
                                         }));
                                     } catch (error) {
@@ -298,7 +403,7 @@ agent running on your computer.
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `Test print failed: ${error.message}`
+                                                message: `❌ Test print failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -313,7 +418,7 @@ agent running on your computer.
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: 'Cash drawer opened'
+                                                message: '✅ Cash drawer command sent'
                                             }
                                         }));
                                     } catch (error) {
@@ -322,7 +427,7 @@ agent running on your computer.
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `Cash drawer failed: ${error.message}`
+                                                message: `❌ Cash drawer failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -332,35 +437,36 @@ agent running on your computer.
                                     ws.send(JSON.stringify({
                                         type: 'error',
                                         requestId: data.requestId,
-                                        payload: { message: `Unknown command: ${data.type}` }
+                                        payload: { message: `❌ Unknown command: ${data.type}` }
                                     }));
                             }
                         } catch (error) {
-                            this.log(`Message processing error: ${error.message}`);
+                            this.log(`❌ Message processing error: ${error.message}`);
                             ws.send(JSON.stringify({
                                 type: 'error',
-                                payload: { message: 'Invalid request format' }
+                                payload: { message: '❌ Invalid request format' }
                             }));
                         }
                     });
 
                     ws.on('close', () => {
-                        this.log('Client disconnected');
+                        this.log('🔌 Client disconnected');
                     });
 
                     ws.on('error', (error) => {
-                        this.log(`WebSocket error: ${error.message}`);
+                        this.log(`❌ WebSocket error: ${error.message}`);
                     });
                 });
 
                 this.wss.on('listening', () => {
-                    this.log(`🖨️ AaravPOS Print Server running on ws://127.0.0.1:${this.PORT}`);
-                    this.log(`📁 Log file: ${this.logPath}`);
+                    this.log(`🖨️  AaravPOS Print Server running on ws://127.0.0.1:${this.PORT}`);
+                    this.log(`📝 Log file: ${this.logPath}`);
+                    this.log(`💻 Platform: ${os.platform()} ${os.arch()}`);
                     resolve();
                 });
 
                 this.wss.on('error', (error) => {
-                    this.log(`Server error: ${error.message}`);
+                    this.log(`❌ Server error: ${error.message}`);
                     reject(error);
                 });
 
@@ -374,7 +480,7 @@ agent running on your computer.
         return new Promise((resolve) => {
             if (this.wss) {
                 this.wss.close(() => {
-                    this.log('Print server stopped');
+                    this.log('🛑 Print server stopped');
                     resolve();
                 });
             } else {
@@ -389,16 +495,14 @@ agent running on your computer.
             port: this.PORT,
             connections: this.wss ? this.wss.clients.size : 0,
             logPath: this.logPath,
-            lastError: this.lastError,
-            startupTime: this.startupTime
+            platform: os.platform(),
+            version: '1.0.0'
         };
     }
 
-    // Add this method to get printers on demand
     async getPrintersList() {
         return await this.getPrinters();
     }
 }
 
-// Export for use in main process
 module.exports = PrintServer;
