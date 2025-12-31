@@ -121,18 +121,43 @@ class PrintServer {
                 const printers = [];
 
                 if (platform === 'win32') {
-                    // Parse Windows WMIC output
-                    const lines = stdout.split('\r\n').slice(1).filter(line => line.trim());
-                    lines.forEach(line => {
-                        const parts = line.split(/\s{2,}/);
-                        if (parts.length >= 2) {
-                            printers.push({
-                                name: parts[0],
-                                isDefault: parts[1] === 'TRUE',
-                                status: 'READY'
-                            });
+                    exec(
+                        'wmic printer get Name,Default /FORMAT:CSV',
+                        (error, stdout) => {
+                            if (error) {
+                                this.log(`Printer discovery error: ${error.message}`);
+                                return resolve([]);
+                            }
+
+                            const lines = stdout.split('\n').slice(1);
+                            const printers = [];
+
+                            for (const line of lines) {
+                                if (!line.trim()) continue;
+
+                                // CSV format:
+                                // Node,Default,Name
+                                const parts = line.split(',');
+
+                                if (parts.length < 3) continue;
+
+                                const isDefault = parts[1].trim().toUpperCase() === 'TRUE';
+                                const name = parts.slice(2).join(',').trim(); // SAFE even if name has commas
+
+                                if (!name) continue;
+
+                                printers.push({
+                                    name,
+                                    isDefault,
+                                    status: 'READY',
+                                    isConnected: true
+                                });
+                            }
+
+                            resolve(printers);
                         }
-                    });
+                    );
+                    return;
                 } else {
                     // Parse macOS/Linux lpstat output
                     const lines = stdout.split('\n');
