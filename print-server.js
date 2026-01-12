@@ -11,7 +11,7 @@ class PrintServer {
         this.AUTH_TOKEN = 'supersecret';
         this.wss = null;
         this.server = null;
-        
+
         // macOS-specific log location
         const homeDir = os.homedir();
         if (os.platform() === 'darwin') {
@@ -77,12 +77,12 @@ class PrintServer {
                 }
 
                 let command;
-                
+
                 if (platform === 'darwin') {
                     // macOS-specific command with better error handling
                     // Use lpr for raw printing on macOS
                     command = `lpr -P "${printerName}" -o raw "${tempFile}"`;
-                    
+
                     // Alternative for non-raw printers
                     // command = `cat "${tempFile}" | lp -d "${printerName}" -o raw -`;
                 } else if (platform === 'linux') {
@@ -181,7 +181,7 @@ class PrintServer {
                             // Example line: "printer HP_LaserJet is idle.  enabled since ..."
                             const parts = line.split(' ');
                             const name = parts[1];
-                            
+
                             // Determine status
                             let status = 'OFFLINE';
                             if (line.includes('idle') || line.includes('enabled')) {
@@ -229,7 +229,7 @@ class PrintServer {
                         if (line.startsWith('printer ')) {
                             const parts = line.split(' ');
                             const name = parts[1];
-                            
+
                             let status = 'OFFLINE';
                             if (line.includes('idle') || line.includes('enabled')) {
                                 status = 'READY';
@@ -251,38 +251,35 @@ class PrintServer {
     }
 
     getWindowsPrinters() {
-        return new Promise((resolve, reject) => {
-            exec('wmic printer get Name,Default /FORMAT:CSV', (error, stdout) => {
-                if (error) {
-                    return reject(error);
-                }
+    return new Promise((resolve) => {
+        const command =
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select Name,Default | ConvertTo-Json -Compress"';
 
-                const lines = stdout.split('\n').slice(1);
-                const printers = [];
+        exec(command, { windowsHide: true, timeout: 8000 }, (error, stdout, stderr) => {
+            if (error || !stdout) {
+                this.log(`PowerShell printer discovery failed: ${error?.message || stderr || 'no output'}`);
+                return resolve([]);
+            }
 
-                for (const line of lines) {
-                    if (!line.trim()) continue;
+            try {
+                const data = JSON.parse(stdout.trim());
+                const printers = Array.isArray(data) ? data : [data];
 
-                    const parts = line.split(',');
-                    if (parts.length < 3) continue;
-
-                    const isDefault = parts[1].trim().toUpperCase() === 'TRUE';
-                    const name = parts.slice(2).join(',').trim();
-
-                    if (!name) continue;
-
-                    printers.push({
-                        name,
-                        isDefault,
-                        status: 'READY',
-                        isConnected: true
-                    });
-                }
-
-                resolve(printers);
-            });
+                resolve(printers.map(p => ({
+                    name: p.Name,
+                    isDefault: !!p.Default,
+                    status: 'READY',
+                    isConnected: true
+                })));
+            } catch (e) {
+                this.log(`PowerShell JSON parse error: ${e.message}`);
+                resolve([]);
+            }
         });
-    }
+    });
+}
+
+
 
     /* ============================
        START/STOP SERVER
@@ -313,7 +310,7 @@ class PrintServer {
                     // Send welcome message
                     ws.send(JSON.stringify({
                         type: 'connected',
-                        payload: { 
+                        payload: {
                             message: 'AaravPOS Print Server Connected',
                             platform: os.platform(),
                             version: '1.0.0'
