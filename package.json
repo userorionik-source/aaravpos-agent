@@ -18,6 +18,7 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "uuid": "^13.0.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
@@ -84,7 +85,6 @@
     },
     "mac": {
       "target": [
-        "dmg",
         "zip"
       ],
       "icon": "assets/icon.icns",

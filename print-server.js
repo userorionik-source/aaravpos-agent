@@ -60,6 +60,30 @@ class PrintServer {
         return Buffer.concat(parts);
     }
 
+    buildBarcodeBuffer(barcode, type = 'CODE128') {
+        const ESC = 0x1B;
+        const GS = 0x1D;
+        const LF = 0x0A;
+
+        const BARCODE_TYPES = {
+            CODE128: 0x49
+        };
+
+        return Buffer.concat([
+            Buffer.from([GS, 0x68, 80]),        // Barcode height
+            Buffer.from([GS, 0x77, 2]),         // Barcode width
+            Buffer.from([GS, 0x48, 2]),         // Print HRI below
+            Buffer.from([
+                GS, 0x6B,
+                BARCODE_TYPES[type],
+                barcode.length
+            ]),
+            Buffer.from(barcode, 'ascii'),
+            Buffer.from([LF, LF, LF, ESC, 0x69]) // Feed + cut
+        ]);
+    }
+
+
     /* ============================
        macOS PRINT ROUTER
     ============================ */
@@ -154,6 +178,41 @@ class PrintServer {
                 resolve([]);
             }
         });
+    }
+
+    async executeCommand(command, args, requestId) {
+        try {
+            // Validate command exists
+            if (!this.commandHandlers[command]) {
+                throw new Error(`Unknown command: ${command}`);
+            }
+
+            // Log execution attempt
+            this.log(`⚡ Executing command: ${command} (${requestId})`);
+            if (args.printerName) {
+                this.log(`   Printer: ${args.printerName}`);
+            }
+
+            // Execute command via registry
+            const result = await this.commandHandlers[command](args);
+
+            // Log success
+            this.log(`✅ Command ${command} executed successfully`);
+            return {
+                success: true,
+                message: result.message || `Command ${command} executed`,
+                requestId
+            };
+
+        } catch (error) {
+            // Log failure
+            this.log(`❌ Command ${command} failed: ${error.message}`);
+            return {
+                success: false,
+                message: error.message,
+                requestId
+            };
+        }
     }
 
     getMacOSPrinters() {
@@ -251,33 +310,33 @@ class PrintServer {
     }
 
     getWindowsPrinters() {
-    return new Promise((resolve) => {
-        const command =
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select Name,Default | ConvertTo-Json -Compress"';
+        return new Promise((resolve) => {
+            const command =
+                'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select Name,Default | ConvertTo-Json -Compress"';
 
-        exec(command, { windowsHide: true, timeout: 8000 }, (error, stdout, stderr) => {
-            if (error || !stdout) {
-                this.log(`PowerShell printer discovery failed: ${error?.message || stderr || 'no output'}`);
-                return resolve([]);
-            }
+            exec(command, { windowsHide: true, timeout: 8000 }, (error, stdout, stderr) => {
+                if (error || !stdout) {
+                    this.log(`PowerShell printer discovery failed: ${error?.message || stderr || 'no output'}`);
+                    return resolve([]);
+                }
 
-            try {
-                const data = JSON.parse(stdout.trim());
-                const printers = Array.isArray(data) ? data : [data];
+                try {
+                    const data = JSON.parse(stdout.trim());
+                    const printers = Array.isArray(data) ? data : [data];
 
-                resolve(printers.map(p => ({
-                    name: p.Name,
-                    isDefault: !!p.Default,
-                    status: 'READY',
-                    isConnected: true
-                })));
-            } catch (e) {
-                this.log(`PowerShell JSON parse error: ${e.message}`);
-                resolve([]);
-            }
+                    resolve(printers.map(p => ({
+                        name: p.Name,
+                        isDefault: !!p.Default,
+                        status: 'READY',
+                        isConnected: true
+                    })));
+                } catch (e) {
+                    this.log(`PowerShell JSON parse error: ${e.message}`);
+                    resolve([]);
+                }
+            });
         });
-    });
-}
+    }
 
 
 
@@ -313,13 +372,28 @@ class PrintServer {
                         payload: {
                             message: 'AaravPOS Print Server Connected',
                             platform: os.platform(),
-                            version: '1.0.0'
+                            version: '1.0.0',
+                            supportedCommands: Object.keys(this.commandHandlers)
                         }
                     }));
 
                     ws.on('message', async (msg) => {
                         try {
-                            const data = JSON.parse(msg);
+                            let data;
+
+                            try {
+                                data = JSON.parse(msg);
+                            } catch (e) {
+                                console.error('❌ Invalid JSON received:', msg);
+                                return;
+                            }
+
+                            if (!data || typeof data !== 'object') {
+                                console.error('❌ Invalid WS payload:', data);
+                                return;
+                            }
+
+                            const { type, payload = {} } = data;
                             this.log(`📨 Received: ${data.type} (${data.requestId || 'no-id'})`);
 
                             switch (data.type) {
@@ -335,96 +409,136 @@ class PrintServer {
                                             hostname: os.hostname(),
                                             printers: printers,
                                             totalPrinters: printers.length,
-                                            defaultPrinter: printers.find(p => p.isDefault)?.name || null
+                                            defaultPrinter: printers.find(p => p.isDefault)?.name || null,
+                                            supportedCommands: Object.keys(this.commandHandlers)
                                         }
                                     }));
                                     break;
 
-                                case 'print_text':
-                                    try {
-                                        const buffer = this.buildBuffer(data.payload.text, false);
-                                        await this.printRaw(data.payload.printerName, buffer);
+                                case 'execute':  // ✅ UNIFIED EXECUTION INTERFACE
+                                    if (!data.payload || !data.payload.command) {
                                         ws.send(JSON.stringify({
-                                            type: 'print_response',
-                                            requestId: data.requestId,
-                                            payload: {
-                                                success: true,
-                                                message: `✅ Printed to ${data.payload.printerName}`
-                                            }
-                                        }));
-                                    } catch (error) {
-                                        ws.send(JSON.stringify({
-                                            type: 'print_response',
+                                            type: 'execute_response',
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `❌ Print failed: ${error.message}`
+                                                message: 'Missing command in payload'
                                             }
                                         }));
+                                        return;
                                     }
+
+                                    // Execute command via unified engine
+                                    const result = await this.executeCommand(
+                                        data.payload.command,
+                                        data.payload.args || {},
+                                        data.requestId
+                                    );
+
+                                    // Send unified response
+                                    ws.send(JSON.stringify({
+                                        type: 'execute_response',
+                                        requestId: data.requestId,
+                                        payload: result
+                                    }));
+                                    break;
+
+                                // ✅ Legacy support for backward compatibility (can be removed later)
+                                case 'print_text':
+                                    const legacyResult1 = await this.executeCommand(
+                                        'PRINT_TEXT',
+                                        {
+                                            printerName: data.payload.printerName,
+                                            text: data.payload.text
+                                        },
+                                        data.requestId
+                                    );
+                                    ws.send(JSON.stringify({
+                                        type: 'print_response',
+                                        requestId: data.requestId,
+                                        payload: legacyResult1
+                                    }));
                                     break;
 
                                 case 'test_print':
-                                    const TEST_RECEIPT = `
-╔════════════════════════════════════╗
-║   AARAVPOS AGENT TEST PRINT       ║
-╠════════════════════════════════════╣
-║ Date: ${new Date().toLocaleString().padEnd(26)} ║
-║ Agent Version: 1.0.0 (macOS)      ║
-║ Platform: ${os.platform().padEnd(23)} ║
-║ Hostname: ${os.hostname().substring(0, 23).padEnd(23)} ║
-╠════════════════════════════════════╣
-║ This is a test print from the     ║
-║ Electron agent running on your    ║
-║ computer.                          ║
-╠════════════════════════════════════╣
-║           ✅ SUCCESS!              ║
-╚════════════════════════════════════╝
-
-`;
-
-                                    try {
-                                        const buffer = this.buildBuffer(TEST_RECEIPT, false);
-                                        await this.printRaw(data.payload.printerName, buffer);
-                                        ws.send(JSON.stringify({
-                                            type: 'test_print_response',
-                                            requestId: data.requestId,
-                                            payload: {
-                                                success: true,
-                                                message: '✅ Test print sent successfully'
-                                            }
-                                        }));
-                                    } catch (error) {
-                                        ws.send(JSON.stringify({
-                                            type: 'test_print_response',
-                                            requestId: data.requestId,
-                                            payload: {
-                                                success: false,
-                                                message: `❌ Test print failed: ${error.message}`
-                                            }
-                                        }));
-                                    }
+                                    const legacyResult2 = await this.executeCommand(
+                                        'TEST_PRINT',
+                                        { printerName: data.payload.printerName },
+                                        data.requestId
+                                    );
+                                    ws.send(JSON.stringify({
+                                        type: 'test_print_response',
+                                        requestId: data.requestId,
+                                        payload: legacyResult2
+                                    }));
                                     break;
 
                                 case 'open_cash_drawer':
+                                    const legacyResult3 = await this.executeCommand(
+                                        'OPEN_CASH_DRAWER',
+                                        { printerName: data.payload.printerName },
+                                        data.requestId
+                                    );
+                                    ws.send(JSON.stringify({
+                                        type: 'cash_drawer_response',
+                                        requestId: data.requestId,
+                                        payload: legacyResult3
+                                    }));
+                                    break;
+                                case 'print_barcode': {
+                                    const payload = data.payload || {};
+
+                                    if (!payload.barcode || !payload.printerName) {
+                                        ws.send(JSON.stringify({
+                                            type: 'print_response',
+                                            requestId: data.requestId,
+                                            payload: {
+                                                success: false,
+                                                message: '❌ Missing barcode or printer name'
+                                            }
+                                        }));
+                                        return;
+                                    }
+
+                                    const buffer = this.buildBarcodeBuffer(
+                                        payload.barcode,
+                                        payload.format || 'CODE128'
+                                    );
+
+                                    await this.printRaw(payload.printerName, buffer);
+
+                                    ws.send(JSON.stringify({
+                                        type: 'print_response',
+                                        requestId: data.requestId,
+                                        payload: {
+                                            success: true,
+                                            message: `✅ Barcode printed (${payload.barcode})`
+                                        }
+                                    }));
+                                    break;
+                                }
+
                                     try {
-                                        const buffer = this.buildBuffer('OPENING CASH DRAWER\n', true);
+                                        const buffer = this.buildBarcodeBuffer(
+                                            data.payload.barcode,
+                                            data.payload.format
+                                        );
                                         await this.printRaw(data.payload.printerName, buffer);
                                         ws.send(JSON.stringify({
-                                            type: 'cash_drawer_response',
+                                            type: 'print_response',
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: '✅ Cash drawer command sent'
+                                                message: `✅ Barcode printed (${data.payload.barcode})`
                                             }
                                         }));
                                     } catch (error) {
                                         ws.send(JSON.stringify({
-                                            type: 'cash_drawer_response',
+                                            type: 'print_response',
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `❌ Cash drawer failed: ${error.message}`
+                                                message: `❌ Barcode failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -434,7 +548,7 @@ class PrintServer {
                                     ws.send(JSON.stringify({
                                         type: 'error',
                                         requestId: data.requestId,
-                                        payload: { message: `❌ Unknown command: ${data.type}` }
+                                        payload: { message: `❌ Unknown command type: ${data.type}` }
                                     }));
                             }
                         } catch (error) {
@@ -459,6 +573,7 @@ class PrintServer {
                     this.log(`🖨️  AaravPOS Print Server running on ws://127.0.0.1:${this.PORT}`);
                     this.log(`📝 Log file: ${this.logPath}`);
                     this.log(`💻 Platform: ${os.platform()} ${os.arch()}`);
+                    this.log(`⚡ Supported commands: ${Object.keys(this.commandHandlers).join(', ')}`);
                     resolve();
                 });
 
