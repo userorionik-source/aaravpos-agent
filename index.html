@@ -1,116 +1,541 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-    <meta charset="UTF-8" />
-    <title>Printer Queue Manager</title>
+    <meta charset="UTF-8">
+    <title>Receipt Printer Queue Manager</title>
     <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
         body {
-            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
             padding: 20px;
         }
-
-        button {
-            margin: 4px;
-            padding: 6px 12px;
-            cursor: pointer;
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
         }
-
-        table {
-            border-collapse: collapse;
-            margin-top: 15px;
+        
+        header {
+            background: linear-gradient(90deg, #4f46e5, #7c3aed);
+            color: white;
+            padding: 25px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+        }
+        
+        .printer-status {
+            background: rgba(255,255,255,0.1);
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #10b981;
+        }
+        
+        .status-indicator.paused {
+            background: #ef4444;
+        }
+        
+        main {
+            padding: 30px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        
+        .card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #475569;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .card-title i {
+            color: #4f46e5;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #64748b;
+            font-weight: 500;
+        }
+        
+        input[type="text"] {
             width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s;
         }
-
-        th,
-        td {
-            border: 1px solid #ccc;
-            padding: 8px;
-            text-align: left;
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #4f46e5;
         }
-
+        
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(90deg, #4f46e5, #7c3aed);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(90deg, #10b981, #34d399);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(90deg, #ef4444, #f87171);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(90deg, #f59e0b, #fbbf24);
+            color: white;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
         th {
-            background: #eee;
+            background: #f1f5f9;
+            padding: 15px;
+            text-align: left;
+            color: #475569;
+            font-weight: 600;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+            color: #64748b;
+        }
+        
+        tr:hover {
+            background: #f8fafc;
+        }
+        
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        .status-queued {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+        
+        .status-paused {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        
+        .log-panel {
+            grid-column: 1 / -1;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .log-error {
+            background: #fef2f2;
+            color: #dc2626;
+            border-left: 4px solid #dc2626;
+        }
+        
+        .log-success {
+            border-left: 4px solid #10b981;
+        }
+        
+        .queue-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .queue-count {
+            background: #4f46e5;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        @media (max-width: 1024px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .button-group {
+                grid-template-columns: 1fr;
+            }
+            
+            header {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
         }
     </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
-
 <body>
-
-    <h2>🖨️ Print Queue Manager</h2>
-
-    <!-- CREATE -->
-    <div>
-        <input id="filePath" placeholder="/tmp/receipt.txt" size="40" />
-        <button onclick="printFile()">Print</button>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-print"></i> Receipt Printer Queue Manager</h1>
+            <div class="printer-status">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Checking printer status...</span>
+            </div>
+        </header>
+        
+        <main>
+            <div class="card">
+                <h2 class="card-title"><i class="fas fa-paper-plane"></i> Print Control</h2>
+                
+                <div class="form-group">
+                    <label for="filePath"><i class="fas fa-file"></i> File Path to Print</label>
+                    <input type="text" id="filePath" placeholder="/path/to/receipt.txt">
+                </div>
+                
+                <div class="button-group">
+                    <button id="printBtn" class="btn-primary">
+                        <i class="fas fa-print"></i> Print File
+                    </button>
+                    <button id="pauseBtn" class="btn-warning">
+                        <i class="fas fa-pause"></i> Pause Printer
+                    </button>
+                    <button id="resumeBtn" class="btn-secondary">
+                        <i class="fas fa-play"></i> Resume Printer
+                    </button>
+                </div>
+                
+                <div class="button-group">
+                    <button id="refreshBtn" class="btn-secondary">
+                        <i class="fas fa-sync"></i> Refresh Queue
+                    </button>
+                    <button id="clearBtn" class="btn-danger">
+                        <i class="fas fa-trash"></i> Clear Queue
+                    </button>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="queue-info">
+                    <h2 class="card-title"><i class="fas fa-list"></i> Print Queue</h2>
+                    <div class="queue-count" id="queueCount">0 jobs</div>
+                </div>
+                
+                <div style="overflow-x: auto;">
+                    <table id="queueTable">
+                        <thead>
+                            <tr>
+                                <th>Job ID</th>
+                                <th>Job Name</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queueBody">
+                            <!-- Queue rows will be inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div style="text-align: center; margin-top: 20px; color: #94a3b8; font-style: italic;">
+                    <i class="fas fa-info-circle"></i> Queue updates automatically every 10 seconds
+                </div>
+            </div>
+            
+            <div class="card log-panel">
+                <h2 class="card-title"><i class="fas fa-terminal"></i> System Logs</h2>
+                <div id="logContainer">
+                    <!-- Log entries will be inserted here -->
+                </div>
+            </div>
+        </main>
     </div>
-
-    <!-- UPDATE -->
-    <div style="margin-top: 10px;">
-        <button onclick="pause()">Pause Printer</button>
-        <button onclick="resume()">Resume Printer</button>
-        <button onclick="loadQueue()">Refresh Queue</button>
-    </div>
-
-    <!-- READ -->
-    <table>
-        <thead>
-            <tr>
-                <th>Job ID</th>
-                <th>Status</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody id="queueBody"></tbody>
-    </table>
 
     <script>
-        async function loadQueue() {
-            const jobs = await window.printerAPI.list();
-            const tbody = document.getElementById("queueBody");
-            tbody.innerHTML = "";
+        let printerStatus = { isPaused: false };
+        let refreshInterval;
 
-            jobs.forEach(job => {
-                const row = document.createElement("tr");
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            await updatePrinterState();
+            await refreshQueue();
+            setupEventListeners();
+            startAutoRefresh();
+            
+            // Setup log listener
+            window.electron?.ipcRenderer?.on('log:message', (event, log) => {
+                addLog(log.message, log.isError, log.timestamp);
+            });
+        });
 
+        // Update printer state
+        async function updatePrinterState() {
+            try {
+                printerStatus = await window.printerAPI.getPrinterState();
+                updateUIStatus();
+            } catch (error) {
+                addLog(`Failed to get printer state: ${error.message}`, true);
+            }
+        }
+
+        function updateUIStatus() {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            const printBtn = document.getElementById('printBtn');
+            
+            if (printerStatus.isPaused) {
+                indicator.className = 'status-indicator paused';
+                statusText.textContent = 'Printer Paused';
+                printBtn.disabled = true;
+                printBtn.innerHTML = '<i class="fas fa-ban"></i> Printer Paused';
+            } else {
+                indicator.className = 'status-indicator';
+                statusText.textContent = 'Printer Ready';
+                printBtn.disabled = false;
+                printBtn.innerHTML = '<i class="fas fa-print"></i> Print File';
+            }
+        }
+
+        // Refresh queue
+        async function refreshQueue() {
+            try {
+                const queue = await window.printerAPI.getQueue();
+                renderQueue(queue);
+                document.getElementById('queueCount').textContent = `${queue.length} job${queue.length !== 1 ? 's' : ''}`;
+            } catch (error) {
+                addLog(`Failed to refresh queue: ${error.message}`, true);
+            }
+        }
+
+        function renderQueue(queue) {
+            const tbody = document.getElementById('queueBody');
+            tbody.innerHTML = '';
+            
+            if (queue.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: #94a3b8; padding: 40px;">
+                            <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 10px; display: block;"></i>
+                            <div>Print queue is empty</div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            queue.forEach(job => {
+                const row = document.createElement('tr');
                 row.innerHTML = `
-          <td>${job.jobId}</td>
-          <td>${job.status}</td>
-          <td>
-            <button onclick="cancel('${job.jobId}')">Cancel</button>
-          </td>
-        `;
-
+                    <td>${job.jobId}</td>
+                    <td>${job.jobName}</td>
+                    <td>
+                        <span class="status-badge ${job.status === 'Paused' ? 'status-paused' : 'status-queued'}">
+                            ${job.status}
+                        </span>
+                    </td>
+                    <td>
+                        <button onclick="cancelJob('${job.jobId}')" class="btn-danger" style="padding: 8px 12px; font-size: 14px;">
+                            <i class="fas fa-times"></i> Cancel
+                        </button>
+                    </td>
+                `;
                 tbody.appendChild(row);
             });
         }
 
+        // Event listeners
+        function setupEventListeners() {
+            document.getElementById('printBtn').addEventListener('click', printFile);
+            document.getElementById('pauseBtn').addEventListener('click', pausePrinter);
+            document.getElementById('resumeBtn').addEventListener('click', resumePrinter);
+            document.getElementById('refreshBtn').addEventListener('click', refreshQueue);
+            document.getElementById('clearBtn').addEventListener('click', clearQueue);
+        }
+
         async function printFile() {
-            const path = document.getElementById("filePath").value;
-            if (!path) return alert("Enter file path");
-            await window.printerAPI.print(path);
-            loadQueue();
+            const filePath = document.getElementById('filePath').value.trim();
+            if (!filePath) {
+                addLog('Please enter a file path', true);
+                return;
+            }
+            
+            try {
+                const result = await window.printerAPI.printFile(filePath);
+                addLog(result.message || 'Print job created successfully');
+                await refreshQueue();
+            } catch (error) {
+                addLog(`Print failed: ${error.message}`, true);
+            }
         }
 
-        async function pause() {
-            await window.printerAPI.pause();
-            alert("Printer paused");
+        async function pausePrinter() {
+            try {
+                await window.printerAPI.pausePrinter();
+                addLog('Printer paused successfully');
+                await updatePrinterState();
+                await refreshQueue();
+            } catch (error) {
+                addLog(`Failed to pause printer: ${error.message}`, true);
+            }
         }
 
-        async function resume() {
-            await window.printerAPI.resume();
-            alert("Printer resumed");
+        async function resumePrinter() {
+            try {
+                await window.printerAPI.resumePrinter();
+                addLog('Printer resumed successfully');
+                await updatePrinterState();
+                await refreshQueue();
+            } catch (error) {
+                addLog(`Failed to resume printer: ${error.message}`, true);
+            }
         }
 
-        async function cancel(jobId) {
-            await window.printerAPI.cancel(jobId);
-            loadQueue();
+        async function cancelJob(jobId) {
+            try {
+                await window.printerAPI.cancelJob(jobId);
+                addLog(`Job ${jobId} cancelled`);
+                await refreshQueue();
+            } catch (error) {
+                addLog(`Failed to cancel job ${jobId}: ${error.message}`, true);
+            }
         }
 
-        // Auto-load on start
-        loadQueue();
+        async function clearQueue() {
+            if (!confirm('Are you sure you want to clear the entire print queue?')) {
+                return;
+            }
+            
+            try {
+                await window.printerAPI.clearQueue();
+                addLog('Queue cleared successfully');
+                await refreshQueue();
+            } catch (error) {
+                addLog(`Failed to clear queue: ${error.message}`, true);
+            }
+        }
+
+        function startAutoRefresh() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = setInterval(refreshQueue, 10000); // 10 seconds
+        }
+
+        // Logging functions
+        function addLog(message, isError = false, timestamp = new Date().toISOString()) {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            
+            const time = new Date(timestamp).toLocaleTimeString();
+            logEntry.className = `log-entry ${isError ? 'log-error' : 'log-success'}`;
+            logEntry.textContent = `[${time}] ${message}`;
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // Expose cancelJob globally for button onclick
+        window.cancelJob = cancelJob;
     </script>
-
 </body>
-
 </html>

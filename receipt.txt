@@ -1,54 +1,38 @@
-==================================================
-           PRINT QUEUE CRUD TEST PAGE
-==================================================
-
-Test Purpose:
-- Validate print queue Create / Read / Update / Delete
-- Confirm job ordering and status transitions
-- Verify pause, resume, cancel, and reprint logic
-
---------------------------------------------------
-Job Metadata
---------------------------------------------------
-Job Name      : QUEUE_TEST_JOB_001
-Submitted By : Print Queue UI
-Priority     : Normal
-Timestamp    : 2026-01-24 12:00:00
-
---------------------------------------------------
-CRUD OPERATIONS CHECKLIST
---------------------------------------------------
-[✔] CREATE  - Job successfully added to queue
-[ ] READ    - Job visible in queue list
-[ ] UPDATE  - Job paused / resumed correctly
-[ ] DELETE  - Job canceled / removed successfully
-
---------------------------------------------------
-PRINT ORDER TEST
---------------------------------------------------
-Line 01 - This should print first
-Line 02 - This should print second
-Line 03 - This should print third
-Line 04 - This should print fourth
-Line 05 - This should print fifth
-
---------------------------------------------------
-STATUS TRANSITION TEST
---------------------------------------------------
-Expected Flow:
-Queued   → Printing → Completed
-
-Alternate Flow:
-Queued → Paused → Resumed → Printing → Completed
-
---------------------------------------------------
-RAW TEXT VALIDATION
---------------------------------------------------
-ABCDEFGHIJKLMNOPQRSTUVWXYZ
-abcdefghijklmnopqrstuvwxyz
-0123456789
-!@#$%^&*()_+-=[]{}|;:',.<>?
-
---------------------------------------------------
-END OF TEST PAGE
---------------------------------------------------
+            AARAVPOS STORE
+========================================
+Invoice:      8F0A8-BE4/2025-26/00002
+Date:         1/24/2026
+Time:         5:06:29 PM
+Order ID:     979ddc0c-c784-4016-978
+Status:       PAID
+Currency:     USD
+Receipt No:   8F0A8-BE4/2025-26/00002
+========================================
+               ITEMS
+----------------------------------------
+Adult Haircut(18+)           x1   30.00
+Standard cut                 x1   50.00
+----------------------------------------
+Subtotal:                        80.00
+Discount:                         0.00
+Tax:                           500.00
+Tip:                             0.00
+TOTAL:                         580.00
+========================================
+         PAYMENT BREAKDOWN
+----------------------------------------
+Paid:                        580.00
+Due:                           0.00
+----------------------------------------
+             PAYMENTS
+----------------------------------------
+CASH via LOCAL - SUCCEEDED    580.00
+----------------------------------------
+             BARCODE
+INV-20251118-035012-7AB50493
+----------------------------------------
+Final Invoice ID: ed1d7c84-2595-xxxx
+Series:          8F0A8-BE4
+Issued (UTC):    2025-11-18 03:50:01
+========================================
+    Thank you for visiting AaravPOS!

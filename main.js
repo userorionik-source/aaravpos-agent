@@ -1,39 +1,63 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
-const path = require("path");
-const printer = require("./printerAgent");
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('path');
+const PrinterAgent = require('./printerAgent.js');
+
+let mainWindow;
+let printerAgent;
 
 function createWindow() {
-    const win = new BrowserWindow({
-        width: 900,
-        height: 600,
-        webPreferences: {
-            preload: path.join(__dirname, "preload.js")
-        }
-    });
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
 
-    win.loadFile(path.join(__dirname, "index.html"));
+  mainWindow.loadFile('index.html');
+  
+  printerAgent = new PrinterAgent(mainWindow);
 }
 
-/* IPC bindings */
+app.whenReady().then(() => {
+  createWindow();
 
-ipcMain.handle("print:create", (_, filePath) =>
-    printer.printFile(filePath)
-);
+  app.on('activate', function () {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
 
-ipcMain.handle("print:list", () =>
-    printer.getQueue()
-);
+app.on('window-all-closed', function () {
+  if (process.platform !== 'darwin') app.quit();
+});
 
-ipcMain.handle("print:pause", () =>
-    printer.pauseQueue()
-);
+// IPC Handlers
+ipcMain.handle('print:create', async (event, filePath) => {
+  return await printerAgent.printFile(filePath);
+});
 
-ipcMain.handle("print:resume", () =>
-    printer.resumeQueue()
-);
+ipcMain.handle('print:list', async () => {
+  return await printerAgent.getQueue();
+});
 
-ipcMain.handle("print:cancel", (_, jobId) =>
-    printer.cancelJob(jobId)
-);
+ipcMain.handle('print:pause', async () => {
+  return await printerAgent.pauseQueue();
+});
 
-app.whenReady().then(createWindow);
+ipcMain.handle('print:resume', async () => {
+  return await printerAgent.resumeQueue();
+});
+
+ipcMain.handle('print:cancel', async (event, jobId) => {
+  return await printerAgent.cancelJob(jobId);
+});
+
+ipcMain.handle('print:clear', async () => {
+  return await printerAgent.clearQueue();
+});
+
+ipcMain.handle('print:state', async () => {
+  return await printerAgent.getPrinterState();
+});
