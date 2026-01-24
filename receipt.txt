@@ -1,0 +1,54 @@
+==================================================
+           PRINT QUEUE CRUD TEST PAGE
+==================================================
+
+Test Purpose:
+- Validate print queue Create / Read / Update / Delete
+- Confirm job ordering and status transitions
+- Verify pause, resume, cancel, and reprint logic
+
+--------------------------------------------------
+Job Metadata
+--------------------------------------------------
+Job Name      : QUEUE_TEST_JOB_001
+Submitted By : Print Queue UI
+Priority     : Normal
+Timestamp    : 2026-01-24 12:00:00
+
+--------------------------------------------------
+CRUD OPERATIONS CHECKLIST
+--------------------------------------------------
+[✔] CREATE  - Job successfully added to queue
+[ ] READ    - Job visible in queue list
+[ ] UPDATE  - Job paused / resumed correctly
+[ ] DELETE  - Job canceled / removed successfully
+
+--------------------------------------------------
+PRINT ORDER TEST
+--------------------------------------------------
+Line 01 - This should print first
+Line 02 - This should print second
+Line 03 - This should print third
+Line 04 - This should print fourth
+Line 05 - This should print fifth
+
+--------------------------------------------------
+STATUS TRANSITION TEST
+--------------------------------------------------
+Expected Flow:
+Queued   → Printing → Completed
+
+Alternate Flow:
+Queued → Paused → Resumed → Printing → Completed
+
+--------------------------------------------------
+RAW TEXT VALIDATION
+--------------------------------------------------
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+abcdefghijklmnopqrstuvwxyz
+0123456789
+!@#$%^&*()_+-=[]{}|;:',.<>?
+
+--------------------------------------------------
+END OF TEST PAGE
+--------------------------------------------------

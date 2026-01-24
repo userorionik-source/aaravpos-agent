@@ -3,20 +3,114 @@
 
 <head>
     <meta charset="UTF-8" />
-    <title>Barcode Print</title>
+    <title>Printer Queue Manager</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        button {
+            margin: 4px;
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+
+        table {
+            border-collapse: collapse;
+            margin-top: 15px;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background: #eee;
+        }
+    </style>
 </head>
 
 <body>
-    <h3>Print Barcode</h3>
 
-    <input id="printer" placeholder="Printer name (CUPS)" />
-    <br /><br />
-    <input id="barcode" placeholder="Barcode text" />
-    <br /><br />
+    <h2>🖨️ Print Queue Manager</h2>
 
-    <button id="printBtn">Print Barcode</button>
+    <!-- CREATE -->
+    <div>
+        <input id="filePath" placeholder="/tmp/receipt.txt" size="40" />
+        <button onclick="printFile()">Print</button>
+    </div>
 
-    <script src="renderer.js"></script>
+    <!-- UPDATE -->
+    <div style="margin-top: 10px;">
+        <button onclick="pause()">Pause Printer</button>
+        <button onclick="resume()">Resume Printer</button>
+        <button onclick="loadQueue()">Refresh Queue</button>
+    </div>
+
+    <!-- READ -->
+    <table>
+        <thead>
+            <tr>
+                <th>Job ID</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="queueBody"></tbody>
+    </table>
+
+    <script>
+        async function loadQueue() {
+            const jobs = await window.printerAPI.list();
+            const tbody = document.getElementById("queueBody");
+            tbody.innerHTML = "";
+
+            jobs.forEach(job => {
+                const row = document.createElement("tr");
+
+                row.innerHTML = `
+          <td>${job.jobId}</td>
+          <td>${job.status}</td>
+          <td>
+            <button onclick="cancel('${job.jobId}')">Cancel</button>
+          </td>
+        `;
+
+                tbody.appendChild(row);
+            });
+        }
+
+        async function printFile() {
+            const path = document.getElementById("filePath").value;
+            if (!path) return alert("Enter file path");
+            await window.printerAPI.print(path);
+            loadQueue();
+        }
+
+        async function pause() {
+            await window.printerAPI.pause();
+            alert("Printer paused");
+        }
+
+        async function resume() {
+            await window.printerAPI.resume();
+            alert("Printer resumed");
+        }
+
+        async function cancel(jobId) {
+            await window.printerAPI.cancel(jobId);
+            loadQueue();
+        }
+
+        // Auto-load on start
+        loadQueue();
+    </script>
+
 </body>
 
 </html>
