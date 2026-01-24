@@ -1,3 +1,4 @@
+// cat << 'EOF' > electron/preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('printerAPI', {
@@ -7,5 +8,7 @@ contextBridge.exposeInMainWorld('printerAPI', {
   resumePrinter: () => ipcRenderer.invoke('print:resume'),
   cancelJob: (jobId) => ipcRenderer.invoke('print:cancel', jobId),
   clearQueue: () => ipcRenderer.invoke('print:clear'),
-  getPrinterState: () => ipcRenderer.invoke('print:state')
+  getPrinterState: () => ipcRenderer.invoke('print:state'),
+  generateTestJobs: (count) => ipcRenderer.invoke('print:generateTest', count)
 });
+// EOF

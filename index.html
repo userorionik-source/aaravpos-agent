@@ -101,7 +101,7 @@
             font-weight: 500;
         }
         
-        input[type="text"] {
+        input[type="text"], input[type="number"] {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e2e8f0;
@@ -110,7 +110,7 @@
             transition: border-color 0.3s;
         }
         
-        input[type="text"]:focus {
+        input[type="text"]:focus, input[type="number"]:focus {
             outline: none;
             border-color: #4f46e5;
         }
@@ -120,6 +120,14 @@
             grid-template-columns: repeat(3, 1fr);
             gap: 12px;
             margin-bottom: 20px;
+        }
+        
+        .button-group-4 {
+            grid-template-columns: repeat(4, 1fr);
+        }
+        
+        .button-group-2 {
+            grid-template-columns: repeat(2, 1fr);
         }
         
         button {
@@ -162,6 +170,11 @@
         
         .btn-warning {
             background: linear-gradient(90deg, #f59e0b, #fbbf24);
+            color: white;
+        }
+        
+        .btn-info {
+            background: linear-gradient(90deg, #06b6d4, #0ea5e9);
             color: white;
         }
         
@@ -236,6 +249,10 @@
             border-left: 4px solid #10b981;
         }
         
+        .log-info {
+            border-left: 4px solid #0ea5e9;
+        }
+        
         .queue-info {
             display: flex;
             justify-content: space-between;
@@ -252,18 +269,36 @@
             font-size: 14px;
         }
         
+        .test-jobs-controls {
+            background: #f0f9ff;
+            border: 1px solid #e0f2fe;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .inline-input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .inline-input-group input {
+            width: 80px;
+        }
+        
         @media (max-width: 1024px) {
             main {
                 grid-template-columns: 1fr;
             }
             
-            .button-group {
-                grid-template-columns: repeat(2, 1fr);
+            .button-group, .button-group-4, .button-group-2 {
+                grid-template-columns: 1fr;
             }
         }
         
         @media (max-width: 768px) {
-            .button-group {
+            .button-group, .button-group-4, .button-group-2 {
                 grid-template-columns: 1fr;
             }
             
@@ -271,6 +306,15 @@
                 flex-direction: column;
                 gap: 15px;
                 text-align: center;
+            }
+            
+            .inline-input-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .inline-input-group input {
+                width: 100%;
             }
         }
     </style>
@@ -292,10 +336,10 @@
                 
                 <div class="form-group">
                     <label for="filePath"><i class="fas fa-file"></i> File Path to Print</label>
-                    <input type="text" id="filePath" placeholder="/path/to/receipt.txt">
+                    <input type="text" id="filePath" placeholder="/path/to/receipt.txt" value="/tmp/test_receipt.txt">
                 </div>
                 
-                <div class="button-group">
+                <div class="button-group button-group-4">
                     <button id="printBtn" class="btn-primary">
                         <i class="fas fa-print"></i> Print File
                     </button>
@@ -305,15 +349,46 @@
                     <button id="resumeBtn" class="btn-secondary">
                         <i class="fas fa-play"></i> Resume Printer
                     </button>
+                    <button id="generateTestBtn" class="btn-info">
+                        <i class="fas fa-vial"></i> Test Jobs
+                    </button>
                 </div>
                 
-                <div class="button-group">
+                <div class="button-group button-group-2">
                     <button id="refreshBtn" class="btn-secondary">
                         <i class="fas fa-sync"></i> Refresh Queue
                     </button>
                     <button id="clearBtn" class="btn-danger">
                         <i class="fas fa-trash"></i> Clear Queue
                     </button>
+                </div>
+                
+                <div class="test-jobs-controls" id="testJobsPanel" style="display: none;">
+                    <h3 class="card-title" style="margin-bottom: 15px; font-size: 16px;">
+                        <i class="fas fa-flask"></i> Generate Test Jobs
+                    </h3>
+                    
+                    <div class="form-group">
+                        <div class="inline-input-group">
+                            <label for="jobCount">Number of Jobs:</label>
+                            <input type="number" id="jobCount" min="1" max="50" value="5">
+                            <button id="generateJobsBtn" class="btn-info" style="padding: 12px 20px;">
+                                <i class="fas fa-bolt"></i> Generate
+                            </button>
+                        </div>
+                        <div style="margin-top: 10px; color: #64748b; font-size: 14px;">
+                            <i class="fas fa-info-circle"></i> Creates test receipt files and adds them to queue
+                        </div>
+                    </div>
+                    
+                    <div class="button-group button-group-2">
+                        <button id="generateRandomBtn" class="btn-secondary">
+                            <i class="fas fa-random"></i> Random (1-10)
+                        </button>
+                        <button id="cancelTestBtn" class="btn-warning">
+                            <i class="fas fa-times"></i> Cancel Test
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -356,6 +431,7 @@
     <script>
         let printerStatus = { isPaused: false };
         let refreshInterval;
+        let testJobsActive = false;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', async () => {
@@ -384,17 +460,20 @@
             const indicator = document.getElementById('statusIndicator');
             const statusText = document.getElementById('statusText');
             const printBtn = document.getElementById('printBtn');
+            const generateTestBtn = document.getElementById('generateTestBtn');
             
             if (printerStatus.isPaused) {
                 indicator.className = 'status-indicator paused';
                 statusText.textContent = 'Printer Paused';
                 printBtn.disabled = true;
                 printBtn.innerHTML = '<i class="fas fa-ban"></i> Printer Paused';
+                generateTestBtn.disabled = true;
             } else {
                 indicator.className = 'status-indicator';
                 statusText.textContent = 'Printer Ready';
                 printBtn.disabled = false;
                 printBtn.innerHTML = '<i class="fas fa-print"></i> Print File';
+                generateTestBtn.disabled = false;
             }
         }
 
@@ -452,6 +531,40 @@
             document.getElementById('resumeBtn').addEventListener('click', resumePrinter);
             document.getElementById('refreshBtn').addEventListener('click', refreshQueue);
             document.getElementById('clearBtn').addEventListener('click', clearQueue);
+            document.getElementById('generateTestBtn').addEventListener('click', toggleTestPanel);
+            document.getElementById('generateJobsBtn').addEventListener('click', generateTestJobs);
+            document.getElementById('generateRandomBtn').addEventListener('click', generateRandomJobs);
+            document.getElementById('cancelTestBtn').addEventListener('click', cancelTestMode);
+        }
+
+        function toggleTestPanel() {
+            const panel = document.getElementById('testJobsPanel');
+            const btn = document.getElementById('generateTestBtn');
+            
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                btn.innerHTML = '<i class="fas fa-times"></i> Hide Test';
+                btn.classList.remove('btn-info');
+                btn.classList.add('btn-warning');
+                testJobsActive = true;
+            } else {
+                panel.style.display = 'none';
+                btn.innerHTML = '<i class="fas fa-vial"></i> Test Jobs';
+                btn.classList.remove('btn-warning');
+                btn.classList.add('btn-info');
+                testJobsActive = false;
+            }
+        }
+
+        function cancelTestMode() {
+            const panel = document.getElementById('testJobsPanel');
+            const btn = document.getElementById('generateTestBtn');
+            
+            panel.style.display = 'none';
+            btn.innerHTML = '<i class="fas fa-vial"></i> Test Jobs';
+            btn.classList.remove('btn-warning');
+            btn.classList.add('btn-info');
+            testJobsActive = false;
         }
 
         async function printFile() {
@@ -467,6 +580,63 @@
                 await refreshQueue();
             } catch (error) {
                 addLog(`Print failed: ${error.message}`, true);
+            }
+        }
+
+        async function generateTestJobs() {
+            if (printerStatus.isPaused) {
+                addLog('Cannot generate test jobs: printer is paused', true);
+                return;
+            }
+            
+            const jobCountInput = document.getElementById('jobCount');
+            const jobCount = parseInt(jobCountInput.value);
+            
+            if (isNaN(jobCount) || jobCount < 1 || jobCount > 50) {
+                addLog('Please enter a valid number between 1 and 50', true);
+                return;
+            }
+            
+            try {
+                addLog(`Generating ${jobCount} test job${jobCount !== 1 ? 's' : ''}...`, false, null, true);
+                
+                const result = await window.printerAPI.generateTestJobs(jobCount);
+                
+                if (result.success) {
+                    addLog(`Successfully generated ${jobCount} test job${jobCount !== 1 ? 's' : ''}`, false, null, false);
+                    await refreshQueue();
+                } else {
+                    addLog(`Failed to generate test jobs: ${result.message}`, true);
+                }
+            } catch (error) {
+                addLog(`Failed to generate test jobs: ${error.message}`, true);
+            }
+        }
+
+        async function generateRandomJobs() {
+            if (printerStatus.isPaused) {
+                addLog('Cannot generate test jobs: printer is paused', true);
+                return;
+            }
+            
+            const jobCount = Math.floor(Math.random() * 10) + 1; // 1-10 random jobs
+            
+            // Update the input to show the random number
+            document.getElementById('jobCount').value = jobCount;
+            
+            try {
+                addLog(`Generating ${jobCount} random test job${jobCount !== 1 ? 's' : ''}...`, false, null, true);
+                
+                const result = await window.printerAPI.generateTestJobs(jobCount);
+                
+                if (result.success) {
+                    addLog(`Successfully generated ${jobCount} random test job${jobCount !== 1 ? 's' : ''}`, false, null, false);
+                    await refreshQueue();
+                } else {
+                    addLog(`Failed to generate random test jobs: ${result.message}`, true);
+                }
+            } catch (error) {
+                addLog(`Failed to generate random test jobs: ${error.message}`, true);
             }
         }
 
@@ -522,12 +692,22 @@
         }
 
         // Logging functions
-        function addLog(message, isError = false, timestamp = new Date().toISOString()) {
+        function addLog(message, isError = false, timestamp = new Date().toISOString(), isInfo = false) {
             const logContainer = document.getElementById('logContainer');
             const logEntry = document.createElement('div');
             
             const time = new Date(timestamp).toLocaleTimeString();
-            logEntry.className = `log-entry ${isError ? 'log-error' : 'log-success'}`;
+            let className = 'log-entry';
+            
+            if (isError) {
+                className += ' log-error';
+            } else if (isInfo) {
+                className += ' log-info';
+            } else {
+                className += ' log-success';
+            }
+            
+            logEntry.className = className;
             logEntry.textContent = `[${time}] ${message}`;
             
             logContainer.appendChild(logEntry);
