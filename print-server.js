@@ -60,6 +60,39 @@ class PrintServer {
         parts.push(FEED_AND_CUT);
         return Buffer.concat(parts);
     }
+    buildReceiptWithBarcodeESCPos(receiptText, barcode, format = 'CODE128') {
+        const ESC = 0x1B;
+        const GS = 0x1D;
+        const LF = 0x0A;
+
+        const buffers = [];
+
+        // Init printer
+        buffers.push(Buffer.from([ESC, 0x40]));
+
+        // Receipt text
+        if (receiptText) {
+            buffers.push(Buffer.from(receiptText + '\n', 'utf8'));
+        }
+
+        // Barcode (CODE128)
+        if (barcode && format === 'CODE128') {
+            const data = `{B${barcode}`; // CODE128 Subset B
+            buffers.push(Buffer.from([GS, 0x68, 80])); // height
+            buffers.push(Buffer.from([GS, 0x77, 2]));  // width
+            buffers.push(Buffer.from([GS, 0x48, 2]));  // HRI below
+            buffers.push(Buffer.from([GS, 0x6B, 0x49, data.length]));
+            buffers.push(Buffer.from(data, 'ascii'));
+            buffers.push(Buffer.from([LF, LF]));
+        }
+
+        // Cut
+        buffers.push(Buffer.from([GS, 0x56, 0x42, 0x00]));
+
+        return Buffer.concat(buffers);
+    }
+
+
 
     /* ============================
        macOS PRINT ROUTER
@@ -430,55 +463,45 @@ class PrintServer {
                                         }));
                                     }
                                     break;
-                                case 'print_barcode':
-                                    function handlePrintBarcode(ws, data) {
-                                        const { requestId, payload } = data;
-                                        const { printerName, barcode, format = 'CODE128' } = payload;
+                                case 'print_barcode': {
+                                    const payload = data.payload || {};
 
-                                        try {
-                                            const buffer = buildBarcodeESCPos(barcode, format);
-                                            const tempFile = `/tmp/barcode_${Date.now()}.bin`;
-
-                                            fs.writeFileSync(tempFile, buffer);
-
-                                            const cmd = `lp -d "${printerName}" -o raw "${tempFile}"`;
-
-                                            exec(cmd, (err) => {
-                                                if (err) {
-                                                    ws.send(JSON.stringify({
-                                                        type: 'print_response',
-                                                        requestId,
-                                                        payload: {
-                                                            success: false,
-                                                            message: err.message
-                                                        }
-                                                    }));
-                                                    return;
-                                                }
-
-                                                ws.send(JSON.stringify({
-                                                    type: 'print_response',
-                                                    requestId,
-                                                    payload: {
-                                                        success: true,
-                                                        message: `Barcode printed (${barcode})`
-                                                    }
-                                                }));
-                                            });
-
-                                        } catch (e) {
-                                            ws.send(JSON.stringify({
-                                                type: 'print_response',
-                                                requestId,
-                                                payload: {
-                                                    success: false,
-                                                    message: e.message
-                                                }
-                                            }));
-                                        }
+                                    if (!payload.barcode || !payload.printerName) {
+                                        ws.send(JSON.stringify({
+                                            type: 'print_response',
+                                            requestId: data.requestId,
+                                            payload: {
+                                                success: false,
+                                                message: '❌ Missing barcode or printer name'
+                                            }
+                                        }));
+                                        return;
                                     }
 
+                                    try {
+                                        const buffer = buildBarcodeESCPos(payload.barcode, payload.format || 'CODE128');
+                                        await this.printRaw(payload.printerName, buffer);
+
+                                        ws.send(JSON.stringify({
+                                            type: 'print_response',
+                                            requestId: data.requestId,
+                                            payload: {
+                                                success: true,
+                                                message: `✅ Barcode printed (${payload.barcode})`
+                                            }
+                                        }));
+                                    } catch (error) {
+                                        ws.send(JSON.stringify({
+                                            type: 'print_response',
+                                            requestId: data.requestId,
+                                            payload: {
+                                                success: false,
+                                                message: `❌ Barcode failed: ${error.message}`
+                                            }
+                                        }));
+                                    }
                                     break;
+                                }
 
                                 default:
                                     ws.send(JSON.stringify({
