@@ -1,4 +1,4 @@
-// print-server.js - FIXED VERSION with Barcode Cut Issue Resolved
+// print-server.js - Enhanced Version for Two Button Behaviors
 const WebSocket = require('ws');
 const os = require('os');
 const fs = require('fs');
@@ -11,6 +11,7 @@ class PrintServer {
         this.AUTH_TOKEN = 'supersecret';
         this.wss = null;
         this.server = null;
+        this.DEMO_BARCODE = 'INV-20251118-035012-7AB50493';
 
         // macOS-specific log location
         const homeDir = os.homedir();
@@ -40,6 +41,8 @@ class PrintServer {
     /* ============================
        ESC/POS BUFFER BUILDERS
     ============================ */
+    
+    // Simple text buffer (for print_text)
     buildBuffer(text, openDrawer = false) {
         const ESC = 0x1B;
         const LF = 0x0A;
@@ -60,110 +63,152 @@ class PrintServer {
     }
 
     /**
-     * FIXED: Build receipt with barcode - ensures complete barcode printing before cut
-     * @param {string} receiptText - The receipt text content
-     * @param {string} barcode - The barcode value to print
-     * @param {string} format - Barcode format (default: CODE128)
-     * @returns {Buffer} - Complete ESC/POS buffer
+     * ✅ SCENARIO 1: Print Barcode Only (from 🧾 Print Barcode button)
+     * Always prints the demo barcode: INV-20251118-035012-7AB50493
      */
-    buildReceiptWithBarcodeESCPos(receiptText, barcode, format = 'CODE128') {
+    buildBarcodeOnlyBuffer(barcode) {
         const ESC = 0x1B;
         const GS = 0x1D;
         const LF = 0x0A;
 
         const buffers = [];
 
-        // Init printer
+        // Initialize printer
         buffers.push(Buffer.from([ESC, 0x40]));
 
-        // ---- TEXT ----
-        if (receiptText) {
-            buffers.push(Buffer.from(receiptText, 'utf8'));
-            buffers.push(Buffer.from([LF, LF])); // Add spacing after text
+        // Center alignment for barcode
+        buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
+        
+        // Add title
+        const title = "AARAVPOS - BARCODE ONLY\n";
+        buffers.push(Buffer.from(title, 'utf8'));
+        buffers.push(Buffer.from([LF]));
+
+        // Barcode configuration
+        buffers.push(Buffer.from([GS, 0x68, 100])); // Height
+        buffers.push(Buffer.from([GS, 0x77, 3]));   // Width
+        buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
+
+        // Feed before barcode
+        buffers.push(Buffer.from([LF, LF]));
+
+        // Print CODE128 barcode
+        // Format: {B + barcode (must be even number of chars for CODE128 B)
+        let barcodeData = barcode;
+        if (barcode.length % 2 !== 0) {
+            barcodeData = barcode + ' '; // Make even
         }
+        
+        buffers.push(Buffer.from([
+            GS, 0x6B,
+            0x49,          // CODE128
+            barcodeData.length + 2  // Length includes {B
+        ]));
+        buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
 
-        // ---- BARCODE ----
-        if (barcode && format === 'CODE128') {
-            const data = `{B${barcode}`;
+        // Feed after barcode
+        buffers.push(Buffer.from([LF, LF, LF]));
 
-            // Barcode configuration
-            buffers.push(Buffer.from([GS, 0x68, 80])); // Height (reduced from 100 to 80 for better clearance)
-            buffers.push(Buffer.from([GS, 0x77, 2]));   // Width (reduced from 3 to 2)
-            buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below (human readable interpretation)
+        // Reset alignment
+        buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
 
-            // IMPORTANT: Feed some paper BEFORE barcode to ensure proper positioning
-            buffers.push(Buffer.from([LF, LF]));
+        // Add footer
+        const footer = "Printed: " + new Date().toLocaleString() + "\n";
+        buffers.push(Buffer.from(footer, 'utf8'));
 
-            // Print barcode
-            buffers.push(Buffer.from([
-                GS, 0x6B,
-                0x49,          // CODE128
-                data.length
-            ]));
-            buffers.push(Buffer.from(data, 'ascii'));
-
-            // CRITICAL: Feed paper AFTER barcode before cut
-            // Feed paper significantly more than barcode height
-            buffers.push(Buffer.from([ESC, 0x64, 15])); // Feed 15 lines (was 10)
-
-            // Add extra feed commands for safety
-            for (let i = 0; i < 3; i++) {
-                buffers.push(Buffer.from([LF]));
-            }
-        } else if (barcode) {
-            // For other barcode formats
-            this.log(`Unsupported barcode format: ${format}`);
-        }
-
-        // ---- FINAL CUT ----
+        // Feed and cut
+        buffers.push(Buffer.from([ESC, 0x64, 10])); // Feed 10 lines
         buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
         return Buffer.concat(buffers);
     }
 
     /**
-     * Build barcode only (without receipt text)
-     * @param {string} barcode - The barcode value
-     * @param {string} format - Barcode format
-     * @returns {Buffer} - ESC/POS buffer with barcode
+     * ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
+     * Prints receipt text + barcode extracted from the text
+     * If no barcode in text, uses demo barcode as fallback
      */
-    buildBarcodeOnlyESCPos(barcode, format = 'CODE128') {
+    buildCombinedReceiptBuffer(receiptText, barcode) {
         const ESC = 0x1B;
         const GS = 0x1D;
         const LF = 0x0A;
 
         const buffers = [];
 
-        // Init
-        // buffers.push(Buffer.from([ESC, 0x40]));
+        // Initialize printer
+        buffers.push(Buffer.from([ESC, 0x40]));
 
-        // Center alignment
-        buffers.push(Buffer.from([ESC, 0x61, 0x01]));
-
-        if (format === 'CODE128') {
-            const data = `{B${barcode}`;
-
-            // Barcode config
-            buffers.push(Buffer.from([GS, 0x68, 120]));
-            buffers.push(Buffer.from([GS, 0x77, 3]));
-            buffers.push(Buffer.from([GS, 0x48, 2]));
-
-            // // Print barcode
-            // buffers.push(Buffer.from([GS, 0x6B, 0x49, data.length]));
-            // buffers.push(Buffer.from(data, 'ascii'));
-
-            // Extra spacing
+        // Print receipt text (with proper encoding)
+        const textLines = receiptText.split('\n');
+        for (let line of textLines) {
+            // Handle empty lines
+            if (line.trim() === '') {
+                buffers.push(Buffer.from([LF]));
+                continue;
+            }
+            
+            // Print line
+            buffers.push(Buffer.from(line, 'utf8'));
             buffers.push(Buffer.from([LF]));
         }
 
+        // Add separator before barcode
+        buffers.push(Buffer.from([LF]));
+        buffers.push(Buffer.from("----------------------------------------\n", 'utf8'));
+        buffers.push(Buffer.from([LF]));
+
+        // Center alignment for barcode
+        buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
+
+        // Barcode configuration
+        buffers.push(Buffer.from([GS, 0x68, 80]));  // Height
+        buffers.push(Buffer.from([GS, 0x77, 2]));   // Width
+        buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
+
+        // Print barcode
+        let barcodeData = barcode;
+        if (barcode.length % 2 !== 0) {
+            barcodeData = barcode + ' ';
+        }
+        
+        buffers.push(Buffer.from([
+            GS, 0x6B,
+            0x49,          // CODE128
+            barcodeData.length + 2
+        ]));
+        buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
+
+        // Feed after barcode
+        buffers.push(Buffer.from([LF, LF]));
+
         // Reset alignment
-        buffers.push(Buffer.from([ESC, 0x61, 0x00]));
+        buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
+
+        // Final separator and cut
+        buffers.push(Buffer.from([LF]));
+        buffers.push(Buffer.from("========================================\n", 'utf8'));
+        buffers.push(Buffer.from("AaravPOS - Receipt with Barcode\n", 'utf8'));
+        buffers.push(Buffer.from([LF, LF, LF]));
 
         // Feed and cut
-        buffers.push(Buffer.from([ESC, 0x64, 15]));
-        buffers.push(Buffer.from([GS, 0x56, 0x00]));
+        buffers.push(Buffer.from([ESC, 0x64, 8])); // Feed 8 lines
+        buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
         return Buffer.concat(buffers);
+    }
+
+    /**
+     * Extract barcode from receipt text (matching frontend logic)
+     */
+    extractBarcodeFromText(text) {
+        const lines = text.split('\n').map(l => l.trim());
+        const barcodeIndex = lines.findIndex(line => line === 'BARCODE');
+        
+        if (barcodeIndex !== -1 && lines[barcodeIndex + 1]) {
+            return lines[barcodeIndex + 1].trim();
+        }
+        
+        return this.DEMO_BARCODE; // Fallback to demo barcode
     }
 
     /* ============================
@@ -404,7 +449,8 @@ class PrintServer {
                         payload: {
                             message: 'AaravPOS Print Server Connected',
                             platform: os.platform(),
-                            version: '1.0.1'
+                            version: '1.1.0',
+                            demoBarcode: this.DEMO_BARCODE
                         }
                     }));
 
@@ -422,11 +468,12 @@ class PrintServer {
                                         payload: {
                                             ok: true,
                                             platform: os.platform(),
-                                            version: '1.0.1',
+                                            version: '1.1.0',
                                             hostname: os.hostname(),
                                             printers: printers,
                                             totalPrinters: printers.length,
-                                            defaultPrinter: printers.find(p => p.isDefault)?.name || null
+                                            defaultPrinter: printers.find(p => p.isDefault)?.name || null,
+                                            demoBarcode: this.DEMO_BARCODE
                                         }
                                     }));
                                     break;
@@ -440,7 +487,8 @@ class PrintServer {
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: `✅ Printed to ${data.payload.printerName}`
+                                                message: `✅ Printed text to ${data.payload.printerName}`,
+                                                barcodeUsed: null
                                             }
                                         }));
                                     } catch (error) {
@@ -457,22 +505,18 @@ class PrintServer {
 
                                 case 'test_print':
                                     const TEST_RECEIPT = `
-╔═══════════════════════════════════╗
-║   AARAVPOS AGENT TEST PRINT       ║
-╠═══════════════════════════════════╣
-║ Date: ${new Date().toLocaleString().padEnd(26)} ║
-║ Agent Version: 1.0.1              ║
-║ Platform: ${os.platform().padEnd(23)} ║
-║ Hostname: ${os.hostname().substring(0, 23).padEnd(23)} ║
-╠═══════════════════════════════════╣
-║ This is a test print from the     ║
-║ Electron agent running on your    ║
-║ computer.                          ║
-╠═══════════════════════════════════╣
-║           ✅ SUCCESS!              ║
-╚═══════════════════════════════════╝
-
+========================================
+        AARAVPOS AGENT TEST PRINT
+========================================
+Date: ${new Date().toLocaleString()}
+Agent Version: 1.1.0
+Platform: ${os.platform()}
+Hostname: ${os.hostname()}
+========================================
+TEST PRINT SUCCESSFUL
+========================================
 `;
+
 
                                     try {
                                         const buffer = this.buildBuffer(TEST_RECEIPT, false);
@@ -538,25 +582,27 @@ class PrintServer {
                                     }
 
                                     try {
-                                        // FIXED: Use the correct function with proper parameters
                                         let buffer;
-
-                                        if (payload.receiptText) {
-                                            // Print receipt with barcode
-                                            buffer = this.buildReceiptWithBarcodeESCPos(
-                                                payload.receiptText || '',
-                                                payload.barcode,
-                                                payload.format || 'CODE128'
+                                        let barcodeToPrint = payload.barcode;
+                                        
+                                        // ✅ SCENARIO 1: Print Barcode Only (from 🧾 Print Barcode button)
+                                        if (!payload.receiptText) {
+                                            // Always use demo barcode for this scenario
+                                            barcodeToPrint = this.DEMO_BARCODE;
+                                            buffer = this.buildBarcodeOnlyBuffer(barcodeToPrint);
+                                            this.log(`🧾 Printing barcode only: ${barcodeToPrint}`);
+                                        }
+                                        // ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
+                                        else {
+                                            // Extract barcode from receipt text if provided
+                                            const extractedBarcode = this.extractBarcodeFromText(payload.receiptText);
+                                            barcodeToPrint = extractedBarcode || payload.barcode;
+                                            
+                                            buffer = this.buildCombinedReceiptBuffer(
+                                                payload.receiptText,
+                                                barcodeToPrint
                                             );
-
-                                            this.log(`Printing receipt with barcode: ${payload.barcode}`);
-                                        } else {
-                                            // Print barcode only
-                                            buffer = this.buildBarcodeOnlyESCPos(
-                                                payload.barcode,
-                                                payload.format || 'CODE128'
-                                            );
-                                            this.log(`Printing barcode only: ${payload.barcode}`);
+                                            this.log(`🖨️ Printing combined receipt with barcode: ${barcodeToPrint}`);
                                         }
 
                                         await this.printRaw(payload.printerName, buffer);
@@ -566,7 +612,9 @@ class PrintServer {
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: `✅ Barcode printed (${payload.barcode})`
+                                                message: `✅ Printed barcode: ${barcodeToPrint}`,
+                                                barcodeUsed: barcodeToPrint,
+                                                isDemoBarcode: barcodeToPrint === this.DEMO_BARCODE
                                             }
                                         }));
                                     } catch (error) {
@@ -609,9 +657,10 @@ class PrintServer {
                 });
 
                 this.wss.on('listening', () => {
-                    this.log(`🖨️  AaravPOS Print Server v1.0.1 running on ws://127.0.0.1:${this.PORT}`);
+                    this.log(`🖨️  AaravPOS Print Server v1.1.0 running on ws://127.0.0.1:${this.PORT}`);
                     this.log(`📝 Log file: ${this.logPath}`);
                     this.log(`💻 Platform: ${os.platform()} ${os.arch()}`);
+                    this.log(`🧾 Demo barcode: ${this.DEMO_BARCODE}`);
                     resolve();
                 });
 
@@ -646,7 +695,8 @@ class PrintServer {
             connections: this.wss ? this.wss.clients.size : 0,
             logPath: this.logPath,
             platform: os.platform(),
-            version: '1.0.1'
+            version: '1.1.0',
+            demoBarcode: this.DEMO_BARCODE
         };
     }
 
