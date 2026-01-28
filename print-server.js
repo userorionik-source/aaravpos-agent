@@ -1,10 +1,9 @@
-// print-server.js - macOS OPTIMIZED VERSION
+// print-server.js - FIXED VERSION with Barcode Cut Issue Resolved
 const WebSocket = require('ws');
 const os = require('os');
 const fs = require('fs');
 const { exec } = require('child_process');
 const path = require('path');
-const { buildBarcodeESCPos } = require('./barcode');
 
 class PrintServer {
     constructor() {
@@ -17,7 +16,6 @@ class PrintServer {
         const homeDir = os.homedir();
         if (os.platform() === 'darwin') {
             this.logPath = path.join(homeDir, 'Library', 'Logs', 'AaravPOS', 'agent.log');
-            // Create log directory if it doesn't exist
             const logDir = path.dirname(this.logPath);
             if (!fs.existsSync(logDir)) {
                 fs.mkdirSync(logDir, { recursive: true });
@@ -40,7 +38,7 @@ class PrintServer {
     }
 
     /* ============================
-       ESC/POS CONSTANTS
+       ESC/POS BUFFER BUILDERS
     ============================ */
     buildBuffer(text, openDrawer = false) {
         const ESC = 0x1B;
@@ -49,7 +47,7 @@ class PrintServer {
         const FEED_AND_CUT = Buffer.from([LF, LF, LF, LF, ESC, 0x69]);
 
         const parts = [
-            Buffer.from(text, 'utf8'), // Changed to utf8 for better character support
+            Buffer.from(text, 'utf8'),
             Buffer.from([LF, LF])
         ];
 
@@ -60,6 +58,14 @@ class PrintServer {
         parts.push(FEED_AND_CUT);
         return Buffer.concat(parts);
     }
+
+    /**
+     * FIXED: Build receipt with barcode - ensures complete barcode printing before cut
+     * @param {string} receiptText - The receipt text content
+     * @param {string} barcode - The barcode value to print
+     * @param {string} format - Barcode format (default: CODE128)
+     * @returns {Buffer} - Complete ESC/POS buffer
+     */
     buildReceiptWithBarcodeESCPos(receiptText, barcode, format = 'CODE128') {
         const ESC = 0x1B;
         const GS = 0x1D;
@@ -67,23 +73,26 @@ class PrintServer {
 
         const buffers = [];
 
-        // Init
+        // Init printer
         buffers.push(Buffer.from([ESC, 0x40]));
 
         // ---- TEXT ----
         if (receiptText) {
             buffers.push(Buffer.from(receiptText, 'utf8'));
-            buffers.push(Buffer.from([LF, LF]));
+            buffers.push(Buffer.from([LF, LF])); // Add spacing after text
         }
 
         // ---- BARCODE ----
         if (barcode && format === 'CODE128') {
             const data = `{B${barcode}`;
 
-            // Barcode config
-            buffers.push(Buffer.from([GS, 0x68, 100])); // Height (increase)
-            buffers.push(Buffer.from([GS, 0x77, 3]));   // Width
-            buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below
+            // Barcode configuration
+            buffers.push(Buffer.from([GS, 0x68, 80])); // Height (reduced from 100 to 80 for better clearance)
+            buffers.push(Buffer.from([GS, 0x77, 2]));   // Width (reduced from 3 to 2)
+            buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below (human readable interpretation)
+
+            // IMPORTANT: Feed some paper BEFORE barcode to ensure proper positioning
+            buffers.push(Buffer.from([LF, LF]));
 
             // Print barcode
             buffers.push(Buffer.from([
@@ -93,22 +102,72 @@ class PrintServer {
             ]));
             buffers.push(Buffer.from(data, 'ascii'));
 
-            // IMPORTANT: feed AFTER barcode
-            buffers.push(Buffer.from([LF, LF, LF, LF, LF, LF]));
+            // CRITICAL: Feed paper AFTER barcode before cut
+            // Feed paper significantly more than barcode height
+            buffers.push(Buffer.from([ESC, 0x64, 15])); // Feed 15 lines (was 10)
+
+            // Add extra feed commands for safety
+            for (let i = 0; i < 3; i++) {
+                buffers.push(Buffer.from([LF]));
+            }
+        } else if (barcode) {
+            // For other barcode formats
+            this.log(`Unsupported barcode format: ${format}`);
         }
 
-        // ---- FINAL FEED (CRITICAL FIX) ----
-        // Feed paper far enough so barcode clears cutter
-        buffers.push(Buffer.from([ESC, 0x64, 10])); // feed 10 lines
+        // ---- FINAL CUT ----
+        buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
-        // ---- CUT (ONLY ONCE) ----
-        buffers.push(Buffer.from([GS, 0x56, 0x00])); // full cut
+        return Buffer.concat(buffers);
+    }
+
+    /**
+     * Build barcode only (without receipt text)
+     * @param {string} barcode - The barcode value
+     * @param {string} format - Barcode format
+     * @returns {Buffer} - ESC/POS buffer with barcode
+     */
+    buildBarcodeOnlyESCPos(barcode, format = 'CODE128') {
+        const ESC = 0x1B;
+        const GS = 0x1D;
+        const LF = 0x0A;
+
+        const buffers = [];
+
+        // Init
+        // buffers.push(Buffer.from([ESC, 0x40]));
+
+        // Center alignment
+        buffers.push(Buffer.from([ESC, 0x61, 0x01]));
+
+        if (format === 'CODE128') {
+            const data = `{B${barcode}`;
+
+            // Barcode config
+            buffers.push(Buffer.from([GS, 0x68, 120]));
+            buffers.push(Buffer.from([GS, 0x77, 3]));
+            buffers.push(Buffer.from([GS, 0x48, 2]));
+
+            // // Print barcode
+            // buffers.push(Buffer.from([GS, 0x6B, 0x49, data.length]));
+            // buffers.push(Buffer.from(data, 'ascii'));
+
+            // Extra spacing
+            buffers.push(Buffer.from([LF]));
+        }
+
+        // Reset alignment
+        buffers.push(Buffer.from([ESC, 0x61, 0x00]));
+
+        // Feed and cut
+        buffers.push(Buffer.from([ESC, 0x64, 15]));
+        buffers.push(Buffer.from([GS, 0x56, 0x00]));
 
         return Buffer.concat(buffers);
     }
 
     /* ============================
-       macOS PRINT ROUTER
+       RAW PRINTING
     ============================ */
     printRaw(printerName, buffer) {
         return new Promise((resolve, reject) => {
@@ -126,15 +185,13 @@ class PrintServer {
                 let command;
 
                 if (platform === 'darwin') {
-                    // macOS-specific command with better error handling
-                    // Use lpr for raw printing on macOS
+                    // macOS
                     command = `lpr -P "${printerName}" -o raw "${tempFile}"`;
-
-                    // Alternative for non-raw printers
-                    // command = `cat "${tempFile}" | lp -d "${printerName}" -o raw -`;
                 } else if (platform === 'linux') {
+                    // Linux
                     command = `lp -d "${printerName}" -o raw "${tempFile}"`;
                 } else if (platform === 'win32') {
+                    // Windows
                     const escapedFile = tempFile.replace(/\\/g, '\\\\');
                     const escapedPrinter = printerName.replace(/\\/g, '\\\\');
                     command = `copy /b "${escapedFile}" "\\\\localhost\\${escapedPrinter}"`;
@@ -169,34 +226,27 @@ class PrintServer {
     }
 
     /* ============================
-       macOS PRINTER DISCOVERY
+       PRINTER DISCOVERY
     ============================ */
     getPrinters() {
         return new Promise((resolve, reject) => {
             const platform = os.platform();
 
             if (platform === 'darwin') {
-                // macOS printer discovery
-                this.getMacOSPrinters()
-                    .then(resolve)
-                    .catch(error => {
-                        this.log(`Printer discovery error: ${error.message}`);
-                        resolve([]);
-                    });
+                this.getMacOSPrinters().then(resolve).catch(error => {
+                    this.log(`Printer discovery error: ${error.message}`);
+                    resolve([]);
+                });
             } else if (platform === 'linux') {
-                this.getLinuxPrinters()
-                    .then(resolve)
-                    .catch(error => {
-                        this.log(`Printer discovery error: ${error.message}`);
-                        resolve([]);
-                    });
+                this.getLinuxPrinters().then(resolve).catch(error => {
+                    this.log(`Printer discovery error: ${error.message}`);
+                    resolve([]);
+                });
             } else if (platform === 'win32') {
-                this.getWindowsPrinters()
-                    .then(resolve)
-                    .catch(error => {
-                        this.log(`Printer discovery error: ${error.message}`);
-                        resolve([]);
-                    });
+                this.getWindowsPrinters().then(resolve).catch(error => {
+                    this.log(`Printer discovery error: ${error.message}`);
+                    resolve([]);
+                });
             } else {
                 resolve([]);
             }
@@ -205,7 +255,6 @@ class PrintServer {
 
     getMacOSPrinters() {
         return new Promise((resolve, reject) => {
-            // First get the default printer
             exec('lpstat -d', (err, defaultOutput) => {
                 let defaultPrinter = null;
                 if (!err && defaultOutput) {
@@ -213,7 +262,6 @@ class PrintServer {
                     defaultPrinter = match ? match[1] : null;
                 }
 
-                // Then get all printers with their status
                 exec('lpstat -p', (error, stdout, stderr) => {
                     if (error) {
                         this.log(`lpstat error: ${error.message}`);
@@ -225,11 +273,9 @@ class PrintServer {
 
                     lines.forEach(line => {
                         if (line.startsWith('printer ')) {
-                            // Example line: "printer HP_LaserJet is idle.  enabled since ..."
                             const parts = line.split(' ');
                             const name = parts[1];
 
-                            // Determine status
                             let status = 'OFFLINE';
                             if (line.includes('idle') || line.includes('enabled')) {
                                 status = 'READY';
@@ -326,10 +372,8 @@ class PrintServer {
         });
     }
 
-
-
     /* ============================
-       START/STOP SERVER
+       WEBSOCKET SERVER
     ============================ */
     start() {
         return new Promise((resolve, reject) => {
@@ -343,7 +387,7 @@ class PrintServer {
                     const clientIp = req.socket.remoteAddress;
                     this.log(`New connection from: ${clientIp}`);
 
-                    // Extract token from URL
+                    // Extract token
                     const url = req.url;
                     const params = new URLSearchParams(url.substring(url.indexOf('?')));
                     const token = params.get('token');
@@ -360,7 +404,7 @@ class PrintServer {
                         payload: {
                             message: 'AaravPOS Print Server Connected',
                             platform: os.platform(),
-                            version: '1.0.0'
+                            version: '1.0.1'
                         }
                     }));
 
@@ -378,7 +422,7 @@ class PrintServer {
                                         payload: {
                                             ok: true,
                                             platform: os.platform(),
-                                            version: '1.0.0',
+                                            version: '1.0.1',
                                             hostname: os.hostname(),
                                             printers: printers,
                                             totalPrinters: printers.length,
@@ -413,20 +457,20 @@ class PrintServer {
 
                                 case 'test_print':
                                     const TEST_RECEIPT = `
-╔════════════════════════════════════╗
+╔═══════════════════════════════════╗
 ║   AARAVPOS AGENT TEST PRINT       ║
-╠════════════════════════════════════╣
+╠═══════════════════════════════════╣
 ║ Date: ${new Date().toLocaleString().padEnd(26)} ║
-║ Agent Version: 1.0.0 (macOS)      ║
+║ Agent Version: 1.0.1              ║
 ║ Platform: ${os.platform().padEnd(23)} ║
 ║ Hostname: ${os.hostname().substring(0, 23).padEnd(23)} ║
-╠════════════════════════════════════╣
+╠═══════════════════════════════════╣
 ║ This is a test print from the     ║
 ║ Electron agent running on your    ║
 ║ computer.                          ║
-╠════════════════════════════════════╣
+╠═══════════════════════════════════╣
 ║           ✅ SUCCESS!              ║
-╚════════════════════════════════════╝
+╚═══════════════════════════════════╝
 
 `;
 
@@ -476,9 +520,11 @@ class PrintServer {
                                         }));
                                     }
                                     break;
+
                                 case 'print_barcode': {
                                     const payload = data.payload || {};
 
+                                    // Validate required fields
                                     if (!payload.barcode || !payload.printerName) {
                                         ws.send(JSON.stringify({
                                             type: 'print_response',
@@ -492,7 +538,27 @@ class PrintServer {
                                     }
 
                                     try {
-                                        const buffer = buildBarcodeESCPos(payload.barcode, payload.format || 'CODE128');
+                                        // FIXED: Use the correct function with proper parameters
+                                        let buffer;
+
+                                        if (payload.receiptText) {
+                                            // Print receipt with barcode
+                                            buffer = this.buildReceiptWithBarcodeESCPos(
+                                                payload.receiptText || '',
+                                                payload.barcode,
+                                                payload.format || 'CODE128'
+                                            );
+
+                                            this.log(`Printing receipt with barcode: ${payload.barcode}`);
+                                        } else {
+                                            // Print barcode only
+                                            buffer = this.buildBarcodeOnlyESCPos(
+                                                payload.barcode,
+                                                payload.format || 'CODE128'
+                                            );
+                                            this.log(`Printing barcode only: ${payload.barcode}`);
+                                        }
+
                                         await this.printRaw(payload.printerName, buffer);
 
                                         ws.send(JSON.stringify({
@@ -504,6 +570,7 @@ class PrintServer {
                                             }
                                         }));
                                     } catch (error) {
+                                        this.log(`Barcode print error: ${error.message}`);
                                         ws.send(JSON.stringify({
                                             type: 'print_response',
                                             requestId: data.requestId,
@@ -542,7 +609,7 @@ class PrintServer {
                 });
 
                 this.wss.on('listening', () => {
-                    this.log(`🖨️  AaravPOS Print Server running on ws://127.0.0.1:${this.PORT}`);
+                    this.log(`🖨️  AaravPOS Print Server v1.0.1 running on ws://127.0.0.1:${this.PORT}`);
                     this.log(`📝 Log file: ${this.logPath}`);
                     this.log(`💻 Platform: ${os.platform()} ${os.arch()}`);
                     resolve();
@@ -579,7 +646,7 @@ class PrintServer {
             connections: this.wss ? this.wss.clients.size : 0,
             logPath: this.logPath,
             platform: os.platform(),
-            version: '1.0.0'
+            version: '1.0.1'
         };
     }
 
