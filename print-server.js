@@ -4,6 +4,7 @@ const os = require('os');
 const fs = require('fs');
 const { exec } = require('child_process');
 const path = require('path');
+const { buildBarcodeESCPos } = require('./barcode');
 
 class PrintServer {
     constructor() {
@@ -251,33 +252,33 @@ class PrintServer {
     }
 
     getWindowsPrinters() {
-    return new Promise((resolve) => {
-        const command =
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select Name,Default | ConvertTo-Json -Compress"';
+        return new Promise((resolve) => {
+            const command =
+                'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select Name,Default | ConvertTo-Json -Compress"';
 
-        exec(command, { windowsHide: true, timeout: 8000 }, (error, stdout, stderr) => {
-            if (error || !stdout) {
-                this.log(`PowerShell printer discovery failed: ${error?.message || stderr || 'no output'}`);
-                return resolve([]);
-            }
+            exec(command, { windowsHide: true, timeout: 8000 }, (error, stdout, stderr) => {
+                if (error || !stdout) {
+                    this.log(`PowerShell printer discovery failed: ${error?.message || stderr || 'no output'}`);
+                    return resolve([]);
+                }
 
-            try {
-                const data = JSON.parse(stdout.trim());
-                const printers = Array.isArray(data) ? data : [data];
+                try {
+                    const data = JSON.parse(stdout.trim());
+                    const printers = Array.isArray(data) ? data : [data];
 
-                resolve(printers.map(p => ({
-                    name: p.Name,
-                    isDefault: !!p.Default,
-                    status: 'READY',
-                    isConnected: true
-                })));
-            } catch (e) {
-                this.log(`PowerShell JSON parse error: ${e.message}`);
-                resolve([]);
-            }
+                    resolve(printers.map(p => ({
+                        name: p.Name,
+                        isDefault: !!p.Default,
+                        status: 'READY',
+                        isConnected: true
+                    })));
+                } catch (e) {
+                    this.log(`PowerShell JSON parse error: ${e.message}`);
+                    resolve([]);
+                }
+            });
         });
-    });
-}
+    }
 
 
 
@@ -428,6 +429,55 @@ class PrintServer {
                                             }
                                         }));
                                     }
+                                    break;
+                                case 'print_barcode':
+                                    function handlePrintBarcode(ws, data) {
+                                        const { requestId, payload } = data;
+                                        const { printerName, barcode, format = 'CODE128' } = payload;
+
+                                        try {
+                                            const buffer = buildBarcodeESCPos(barcode, format);
+                                            const tempFile = `/tmp/barcode_${Date.now()}.bin`;
+
+                                            fs.writeFileSync(tempFile, buffer);
+
+                                            const cmd = `lp -d "${printerName}" -o raw "${tempFile}"`;
+
+                                            exec(cmd, (err) => {
+                                                if (err) {
+                                                    ws.send(JSON.stringify({
+                                                        type: 'print_response',
+                                                        requestId,
+                                                        payload: {
+                                                            success: false,
+                                                            message: err.message
+                                                        }
+                                                    }));
+                                                    return;
+                                                }
+
+                                                ws.send(JSON.stringify({
+                                                    type: 'print_response',
+                                                    requestId,
+                                                    payload: {
+                                                        success: true,
+                                                        message: `Barcode printed (${barcode})`
+                                                    }
+                                                }));
+                                            });
+
+                                        } catch (e) {
+                                            ws.send(JSON.stringify({
+                                                type: 'print_response',
+                                                requestId,
+                                                payload: {
+                                                    success: false,
+                                                    message: e.message
+                                                }
+                                            }));
+                                        }
+                                    }
+
                                     break;
 
                                 default:
