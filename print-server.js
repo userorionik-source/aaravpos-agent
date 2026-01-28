@@ -67,32 +67,45 @@ class PrintServer {
 
         const buffers = [];
 
-        // Init printer
+        // Init
         buffers.push(Buffer.from([ESC, 0x40]));
 
-        // Receipt text
+        // ---- TEXT ----
         if (receiptText) {
-            buffers.push(Buffer.from(receiptText + '\n', 'utf8'));
-        }
-
-        // Barcode (CODE128)
-        if (barcode && format === 'CODE128') {
-            const data = `{B${barcode}`; // CODE128 Subset B
-            buffers.push(Buffer.from([GS, 0x68, 80])); // height
-            buffers.push(Buffer.from([GS, 0x77, 2]));  // width
-            buffers.push(Buffer.from([GS, 0x48, 2]));  // HRI below
-            buffers.push(Buffer.from([GS, 0x6B, 0x49, data.length]));
-            buffers.push(Buffer.from(data, 'ascii'));
+            buffers.push(Buffer.from(receiptText, 'utf8'));
             buffers.push(Buffer.from([LF, LF]));
         }
 
-        // Cut
-        buffers.push(Buffer.from([GS, 0x56, 0x42, 0x00]));
+        // ---- BARCODE ----
+        if (barcode && format === 'CODE128') {
+            const data = `{B${barcode}`;
+
+            // Barcode config
+            buffers.push(Buffer.from([GS, 0x68, 100])); // Height (increase)
+            buffers.push(Buffer.from([GS, 0x77, 3]));   // Width
+            buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below
+
+            // Print barcode
+            buffers.push(Buffer.from([
+                GS, 0x6B,
+                0x49,          // CODE128
+                data.length
+            ]));
+            buffers.push(Buffer.from(data, 'ascii'));
+
+            // IMPORTANT: feed AFTER barcode
+            buffers.push(Buffer.from([LF, LF, LF, LF, LF, LF]));
+        }
+
+        // ---- FINAL FEED (CRITICAL FIX) ----
+        // Feed paper far enough so barcode clears cutter
+        buffers.push(Buffer.from([ESC, 0x64, 10])); // feed 10 lines
+
+        // ---- CUT (ONLY ONCE) ----
+        buffers.push(Buffer.from([GS, 0x56, 0x00])); // full cut
 
         return Buffer.concat(buffers);
     }
-
-
 
     /* ============================
        macOS PRINT ROUTER
