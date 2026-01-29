@@ -43,6 +43,7 @@ class PrintServer {
     ============================ */
 
     // Simple text buffer (for print_text) - OPTIMIZED
+    // Simple text buffer (for print_text) - FIXED MARGINS
     buildBuffer(text, openDrawer = false) {
         const ESC = 0x1B;
         const LF = 0x0A;
@@ -52,13 +53,16 @@ class PrintServer {
 
         const parts = [
             Buffer.from(text, 'utf8'),
+            Buffer.from([LF]),
+            Buffer.from([LF]),
             Buffer.from([LF])
         ];
-
+        
         if (openDrawer) {
             parts.push(DRAWER_KICK);
         }
-
+        
+        Buffer.from([LF])
         parts.push(FEED_AND_CUT);
         return Buffer.concat(parts);
     }
@@ -86,28 +90,29 @@ class PrintServer {
         buffers.push(Buffer.from(title, 'utf8'));
 
         // Barcode configuration
-        buffers.push(Buffer.from([GS, 0x68, 80])); // Height (reduced from 100)
-        buffers.push(Buffer.from([GS, 0x77, 2]));   // Width (reduced from 3)
+        buffers.push(Buffer.from([GS, 0x68, 80])); // Height
+        buffers.push(Buffer.from([GS, 0x77, 2]));   // Width
         buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
 
-        // Reduced feed before barcode from 2 LFs to 1 LF
+        // Feed before barcode
         buffers.push(Buffer.from([LF]));
 
-        // Print CODE128 barcode
-        let barcodeData = barcode;
-        if (barcode.length % 2 !== 0) {
-            barcodeData = barcode + ' '; // Make even
+        // Print CODE128 barcode - FIXED: Use the actual barcode parameter
+        let barcodeData = barcode || this.DEMO_BARCODE; // Use provided barcode or demo
+        if (barcodeData.length % 2 !== 0) {
+            barcodeData = barcodeData + ' '; // Make even
         }
 
+        // Correct barcode command structure
         buffers.push(Buffer.from([
-            GS, 0x6B,
-            0x49,          // CODE128
-            barcodeData.length + 2  // Length includes {B
+            GS, 0x6B,           // GS k - Print barcode
+            0x49,               // m = 73 (0x49 for CODE128)
+            barcodeData.length + 2  // n = number of bytes
         ]));
         buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
 
-        // Reduced feed after barcode from 3 LFs to 2 LFs
-        buffers.push(Buffer.from([LF, LF]));
+        // Feed after barcode
+        buffers.push(Buffer.from([LF]));
 
         // Reset alignment
         buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
@@ -116,13 +121,19 @@ class PrintServer {
         const footer = "Printed: " + new Date().toLocaleString() + "\n";
         buffers.push(Buffer.from(footer, 'utf8'));
 
-        // Reduced feed lines before cut from 10 to 4
-        buffers.push(Buffer.from([ESC, 0x64, 4])); // Feed 4 lines (enough for cutter)
+        // Feed and cut
+        buffers.push(Buffer.from([LF, ESC, 0x64, 4])); // Feed 4 lines
         buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
         return Buffer.concat(buffers);
     }
 
+    /**
+ * ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
+ * Prints receipt text + barcode extracted from the text
+ * If only barcode present, prints just the barcode
+ * FIXED: Removes extra separators when only barcode
+ */
     buildCombinedReceiptBuffer(receiptText, barcode) {
         const ESC = 0x1B;
         const GS = 0x1D;
@@ -137,7 +148,34 @@ class PrintServer {
         const textLines = receiptText.split('\n');
         let skipNextLine = false;
         let previousLineWasEmpty = false;
+        let hasContentBeforeBarcode = false;
+        let hasContentAfterBarcode = false;
+        let barcodeFound = false;
 
+        // First pass to check content structure
+        for (let i = 0; i < textLines.length; i++) {
+            const line = textLines[i].trim();
+            if (line === 'BARCODE') {
+                barcodeFound = true;
+                // Check if there's content before barcode
+                for (let j = 0; j < i; j++) {
+                    if (textLines[j].trim() !== '' && textLines[j].trim() !== 'BARCODE') {
+                        hasContentBeforeBarcode = true;
+                        break;
+                    }
+                }
+                // Check if there's content after barcode
+                for (let j = i + 2; j < textLines.length; j++) {
+                    if (textLines[j].trim() !== '') {
+                        hasContentAfterBarcode = true;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+
+        // Second pass to build buffer
         for (let i = 0; i < textLines.length; i++) {
             const line = textLines[i];
 
@@ -154,18 +192,21 @@ class PrintServer {
 
             // Check if this line is "BARCODE"
             if (line.trim() === 'BARCODE') {
-                // Add minimal separator before barcode
-                buffers.push(Buffer.from([LF]));
+                // Add separator only if there's content before barcode
+                if (hasContentBeforeBarcode) {
+                    buffers.push(Buffer.from([LF]));
+                    buffers.push(Buffer.from("--------------------------------\n", 'utf8'));
+                }
 
                 // Center alignment for barcode
                 buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
 
                 // Barcode configuration with optimized settings
-                buffers.push(Buffer.from([GS, 0x68, 60]));  // Height (reduced from 80)
+                buffers.push(Buffer.from([GS, 0x68, 80]));  // Height
                 buffers.push(Buffer.from([GS, 0x77, 2]));   // Width
                 buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
 
-                // Print barcode (use the provided barcode parameter)
+                // Print barcode
                 let barcodeData = barcode;
                 if (barcode.length % 2 !== 0) {
                     barcodeData = barcode + ' ';
@@ -178,7 +219,7 @@ class PrintServer {
                 ]));
                 buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
 
-                // Single feed after barcode
+                // Feed after barcode
                 buffers.push(Buffer.from([LF]));
 
                 // Reset alignment
@@ -187,8 +228,12 @@ class PrintServer {
                 // Skip the next line (the barcode text value) since we just printed it as barcode
                 skipNextLine = true;
 
-                // Add separator after barcode
-                buffers.push(Buffer.from([LF]));
+                // Add separator only if there's content after barcode
+                if (hasContentAfterBarcode) {
+                    buffers.push(Buffer.from([LF]));
+                    buffers.push(Buffer.from("--------------------------------\n", 'utf8'));
+                }
+
                 continue;
             }
 
@@ -203,11 +248,27 @@ class PrintServer {
             buffers.push(Buffer.from([LF]));
         }
 
-        // Final minimal separator
-        buffers.push(Buffer.from([LF]));
+        // Only add footer if there was actual content
+        let hasAnyContent = false;
+        for (const line of textLines) {
+            if (line.trim() !== '' && line.trim() !== 'BARCODE') {
+                // Check if this line wasn't the barcode value that we skipped
+                const trimmedLine = line.trim();
+                if (trimmedLine !== barcode && trimmedLine !== '') {
+                    hasAnyContent = true;
+                    break;
+                }
+            }
+        }
 
-        // Single cut at the end
-        buffers.push(Buffer.from([ESC, 0x64, 3])); // Feed 3 lines (enough for cutter)
+        if (hasAnyContent || barcodeFound) {
+            // Add footer with minimal spacing
+            buffers.push(Buffer.from([LF]));
+            buffers.push(Buffer.from("AaravPOS - Receipt\n", 'utf8'));
+        }
+
+        // Single cut at the end with consistent feeding
+        buffers.push(Buffer.from([LF, ESC, 0x64, 3])); // Feed 3 lines before cut
         buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
         return Buffer.concat(buffers);
