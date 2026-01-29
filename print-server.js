@@ -11,7 +11,7 @@ class PrintServer {
         this.AUTH_TOKEN = 'supersecret';
         this.wss = null;
         this.server = null;
-        this.DEMO_BARCODE = 'INV-20251118-035012-7AB50493';
+        this.DEMO_BARCODE = 'INV-20251118';
 
         // macOS-specific log location
         const homeDir = os.homedir();
@@ -192,12 +192,6 @@ class PrintServer {
 
             // Check if this line is "BARCODE"
             if (line.trim() === 'BARCODE') {
-                // Add separator only if there's content before barcode
-                if (hasContentBeforeBarcode) {
-                    buffers.push(Buffer.from([LF]));
-                    buffers.push(Buffer.from("--------------------------------\n", 'utf8'));
-                }
-
                 // Center alignment for barcode
                 buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
 
@@ -227,13 +221,6 @@ class PrintServer {
 
                 // Skip the next line (the barcode text value) since we just printed it as barcode
                 skipNextLine = true;
-
-                // Add separator only if there's content after barcode
-                if (hasContentAfterBarcode) {
-                    buffers.push(Buffer.from([LF]));
-                    buffers.push(Buffer.from("--------------------------------\n", 'utf8'));
-                }
-
                 continue;
             }
 
