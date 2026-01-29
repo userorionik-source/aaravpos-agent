@@ -1,4 +1,4 @@
-// print-server.js - Enhanced Version for Two Button Behaviors
+// print-server.js - Enhanced Version for Two Button Behaviors - OPTIMIZED SPACING
 const WebSocket = require('ws');
 const os = require('os');
 const fs = require('fs');
@@ -39,19 +39,20 @@ class PrintServer {
     }
 
     /* ============================
-       ESC/POS BUFFER BUILDERS
+       ESC/POS BUFFER BUILDERS - OPTIMIZED FOR PAPER SAVING
     ============================ */
     
-    // Simple text buffer (for print_text)
+    // Simple text buffer (for print_text) - OPTIMIZED
     buildBuffer(text, openDrawer = false) {
         const ESC = 0x1B;
         const LF = 0x0A;
         const DRAWER_KICK = Buffer.from([ESC, 0x70, 0x00, 0x19, 0xFA]);
-        const FEED_AND_CUT = Buffer.from([LF, LF, LF, LF, ESC, 0x69]);
+        // Reduced from 4 LFs to 2 LFs before cut
+        const FEED_AND_CUT = Buffer.from([LF, LF, ESC, 0x69]);
 
         const parts = [
             Buffer.from(text, 'utf8'),
-            Buffer.from([LF, LF])
+            Buffer.from([LF])
         ];
 
         if (openDrawer) {
@@ -65,6 +66,7 @@ class PrintServer {
     /**
      * ✅ SCENARIO 1: Print Barcode Only (from 🧾 Print Barcode button)
      * Always prints the demo barcode: INV-20251118-035012-7AB50493
+     * OPTIMIZED: Reduced excessive line feeds
      */
     buildBarcodeOnlyBuffer(barcode) {
         const ESC = 0x1B;
@@ -79,21 +81,19 @@ class PrintServer {
         // Center alignment for barcode
         buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
         
-        // Add title
+        // Add title with minimal spacing
         const title = "AARAVPOS - BARCODE ONLY\n";
         buffers.push(Buffer.from(title, 'utf8'));
-        buffers.push(Buffer.from([LF]));
 
         // Barcode configuration
-        buffers.push(Buffer.from([GS, 0x68, 100])); // Height
-        buffers.push(Buffer.from([GS, 0x77, 3]));   // Width
+        buffers.push(Buffer.from([GS, 0x68, 80])); // Height (reduced from 100)
+        buffers.push(Buffer.from([GS, 0x77, 2]));   // Width (reduced from 3)
         buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
 
-        // Feed before barcode
-        buffers.push(Buffer.from([LF, LF]));
+        // Reduced feed before barcode from 2 LFs to 1 LF
+        buffers.push(Buffer.from([LF]));
 
         // Print CODE128 barcode
-        // Format: {B + barcode (must be even number of chars for CODE128 B)
         let barcodeData = barcode;
         if (barcode.length % 2 !== 0) {
             barcodeData = barcode + ' '; // Make even
@@ -106,18 +106,18 @@ class PrintServer {
         ]));
         buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
 
-        // Feed after barcode
-        buffers.push(Buffer.from([LF, LF, LF]));
+        // Reduced feed after barcode from 3 LFs to 2 LFs
+        buffers.push(Buffer.from([LF, LF]));
 
         // Reset alignment
         buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
 
-        // Add footer
+        // Add footer with minimal spacing
         const footer = "Printed: " + new Date().toLocaleString() + "\n";
         buffers.push(Buffer.from(footer, 'utf8'));
 
-        // Feed and cut
-        buffers.push(Buffer.from([ESC, 0x64, 10])); // Feed 10 lines
+        // Reduced feed lines before cut from 10 to 4
+        buffers.push(Buffer.from([ESC, 0x64, 4])); // Feed 4 lines (enough for cutter)
         buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
         return Buffer.concat(buffers);
@@ -127,6 +127,7 @@ class PrintServer {
      * ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
      * Prints receipt text + barcode extracted from the text
      * If no barcode in text, uses demo barcode as fallback
+     * OPTIMIZED: Reduced excessive spacing, minimal line feeds
      */
     buildCombinedReceiptBuffer(receiptText, barcode) {
         const ESC = 0x1B;
@@ -140,28 +141,34 @@ class PrintServer {
 
         // Print receipt text (with proper encoding)
         const textLines = receiptText.split('\n');
+        let previousLineWasEmpty = false;
+        
         for (let line of textLines) {
-            // Handle empty lines
+            // Handle empty lines - only add ONE empty line even if multiple consecutive
             if (line.trim() === '') {
-                buffers.push(Buffer.from([LF]));
+                if (!previousLineWasEmpty) {
+                    buffers.push(Buffer.from([LF]));
+                    previousLineWasEmpty = true;
+                }
                 continue;
             }
+            
+            previousLineWasEmpty = false;
             
             // Print line
             buffers.push(Buffer.from(line, 'utf8'));
             buffers.push(Buffer.from([LF]));
         }
 
-        // Add separator before barcode
+        // Add minimal separator before barcode
         buffers.push(Buffer.from([LF]));
-        buffers.push(Buffer.from("----------------------------------------\n", 'utf8'));
-        buffers.push(Buffer.from([LF]));
+        buffers.push(Buffer.from("--------------------------------\n", 'utf8'));
 
         // Center alignment for barcode
         buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
 
-        // Barcode configuration
-        buffers.push(Buffer.from([GS, 0x68, 80]));  // Height
+        // Barcode configuration with optimized settings
+        buffers.push(Buffer.from([GS, 0x68, 60]));  // Height (reduced from 80)
         buffers.push(Buffer.from([GS, 0x77, 2]));   // Width
         buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
 
@@ -178,20 +185,19 @@ class PrintServer {
         ]));
         buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
 
-        // Feed after barcode
-        buffers.push(Buffer.from([LF, LF]));
+        // Single feed after barcode (reduced from 2)
+        buffers.push(Buffer.from([LF]));
 
         // Reset alignment
         buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
 
-        // Final separator and cut
+        // Final minimal separator
         buffers.push(Buffer.from([LF]));
-        buffers.push(Buffer.from("========================================\n", 'utf8'));
-        buffers.push(Buffer.from("AaravPOS - Receipt with Barcode\n", 'utf8'));
-        buffers.push(Buffer.from([LF, LF, LF]));
+        buffers.push(Buffer.from("===============================\n", 'utf8'));
+        buffers.push(Buffer.from("AaravPOS - Receipt\n", 'utf8'));
 
-        // Feed and cut
-        buffers.push(Buffer.from([ESC, 0x64, 8])); // Feed 8 lines
+        // Reduced feed lines before cut from 8 to 3
+        buffers.push(Buffer.from([ESC, 0x64, 3])); // Feed 3 lines (enough for cutter)
         buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
         return Buffer.concat(buffers);
@@ -438,7 +444,7 @@ class PrintServer {
                     const token = params.get('token');
 
                     if (token !== this.AUTH_TOKEN) {
-                        this.log(`❌ Invalid token from ${clientIp}`);
+                        this.log(`Invalid token from ${clientIp}`);
                         ws.close();
                         return;
                     }
@@ -449,15 +455,16 @@ class PrintServer {
                         payload: {
                             message: 'AaravPOS Print Server Connected',
                             platform: os.platform(),
-                            version: '1.1.0',
-                            demoBarcode: this.DEMO_BARCODE
+                            version: '1.2.0',
+                            demoBarcode: this.DEMO_BARCODE,
+                            paperOptimized: true
                         }
                     }));
 
                     ws.on('message', async (msg) => {
                         try {
                             const data = JSON.parse(msg);
-                            this.log(`📨 Received: ${data.type} (${data.requestId || 'no-id'})`);
+                            this.log(`Received: ${data.type} (${data.requestId || 'no-id'})`);
 
                             switch (data.type) {
                                 case 'health':
@@ -468,12 +475,13 @@ class PrintServer {
                                         payload: {
                                             ok: true,
                                             platform: os.platform(),
-                                            version: '1.1.0',
+                                            version: '1.2.0',
                                             hostname: os.hostname(),
                                             printers: printers,
                                             totalPrinters: printers.length,
                                             defaultPrinter: printers.find(p => p.isDefault)?.name || null,
-                                            demoBarcode: this.DEMO_BARCODE
+                                            demoBarcode: this.DEMO_BARCODE,
+                                            paperOptimized: true
                                         }
                                     }));
                                     break;
@@ -487,8 +495,9 @@ class PrintServer {
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: `✅ Printed text to ${data.payload.printerName}`,
-                                                barcodeUsed: null
+                                                message: `Printed text to ${data.payload.printerName}`,
+                                                barcodeUsed: null,
+                                                paperSaved: true
                                             }
                                         }));
                                     } catch (error) {
@@ -497,7 +506,7 @@ class PrintServer {
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `❌ Print failed: ${error.message}`
+                                                message: `Print failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -505,16 +514,16 @@ class PrintServer {
 
                                 case 'test_print':
                                     const TEST_RECEIPT = `
-========================================
-        AARAVPOS AGENT TEST PRINT
-========================================
+================================
+    AARAVPOS TEST PRINT
+================================
 Date: ${new Date().toLocaleString()}
-Agent Version: 1.1.0
+Version: 1.2.0
 Platform: ${os.platform()}
 Hostname: ${os.hostname()}
-========================================
+================================
 TEST PRINT SUCCESSFUL
-========================================
+================================
 `;
 
 
@@ -526,7 +535,7 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: '✅ Test print sent successfully'
+                                                message: 'Test print sent successfully'
                                             }
                                         }));
                                     } catch (error) {
@@ -535,7 +544,7 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `❌ Test print failed: ${error.message}`
+                                                message: `Test print failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -550,7 +559,7 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: '✅ Cash drawer command sent'
+                                                message: 'Cash drawer command sent'
                                             }
                                         }));
                                     } catch (error) {
@@ -559,7 +568,7 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `❌ Cash drawer failed: ${error.message}`
+                                                message: `Cash drawer failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -575,7 +584,7 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: '❌ Missing barcode or printer name'
+                                                message: 'Missing barcode or printer name'
                                             }
                                         }));
                                         return;
@@ -585,14 +594,14 @@ TEST PRINT SUCCESSFUL
                                         let buffer;
                                         let barcodeToPrint = payload.barcode;
                                         
-                                        // ✅ SCENARIO 1: Print Barcode Only (from 🧾 Print Barcode button)
+                                        // ✅ SCENARIO 1: Print Barcode Only (from Print Barcode button)
                                         if (!payload.receiptText) {
                                             // Always use demo barcode for this scenario
                                             barcodeToPrint = this.DEMO_BARCODE;
                                             buffer = this.buildBarcodeOnlyBuffer(barcodeToPrint);
-                                            this.log(`🧾 Printing barcode only: ${barcodeToPrint}`);
+                                            this.log(`Printing barcode only: ${barcodeToPrint}`);
                                         }
-                                        // ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
+                                        // ✅ SCENARIO 2: Print Combined Receipt (from Print Text button)
                                         else {
                                             // Extract barcode from receipt text if provided
                                             const extractedBarcode = this.extractBarcodeFromText(payload.receiptText);
@@ -602,7 +611,7 @@ TEST PRINT SUCCESSFUL
                                                 payload.receiptText,
                                                 barcodeToPrint
                                             );
-                                            this.log(`🖨️ Printing combined receipt with barcode: ${barcodeToPrint}`);
+                                            this.log(`Printing combined receipt with barcode: ${barcodeToPrint}`);
                                         }
 
                                         await this.printRaw(payload.printerName, buffer);
@@ -612,9 +621,10 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: `✅ Printed barcode: ${barcodeToPrint}`,
+                                                message: `Printed barcode: ${barcodeToPrint}`,
                                                 barcodeUsed: barcodeToPrint,
-                                                isDemoBarcode: barcodeToPrint === this.DEMO_BARCODE
+                                                isDemoBarcode: barcodeToPrint === this.DEMO_BARCODE,
+                                                paperOptimized: true
                                             }
                                         }));
                                     } catch (error) {
@@ -624,7 +634,7 @@ TEST PRINT SUCCESSFUL
                                             requestId: data.requestId,
                                             payload: {
                                                 success: false,
-                                                message: `❌ Barcode failed: ${error.message}`
+                                                message: `Barcode failed: ${error.message}`
                                             }
                                         }));
                                     }
@@ -635,37 +645,38 @@ TEST PRINT SUCCESSFUL
                                     ws.send(JSON.stringify({
                                         type: 'error',
                                         requestId: data.requestId,
-                                        payload: { message: `❌ Unknown command: ${data.type}` }
+                                        payload: { message: `Unknown command: ${data.type}` }
                                     }));
                             }
                         } catch (error) {
-                            this.log(`❌ Message processing error: ${error.message}`);
+                            this.log(`Message processing error: ${error.message}`);
                             ws.send(JSON.stringify({
                                 type: 'error',
-                                payload: { message: '❌ Invalid request format' }
+                                payload: { message: 'Invalid request format' }
                             }));
                         }
                     });
 
                     ws.on('close', () => {
-                        this.log('🔌 Client disconnected');
+                        this.log('Client disconnected');
                     });
 
                     ws.on('error', (error) => {
-                        this.log(`❌ WebSocket error: ${error.message}`);
+                        this.log(`WebSocket error: ${error.message}`);
                     });
                 });
 
                 this.wss.on('listening', () => {
-                    this.log(`🖨️  AaravPOS Print Server v1.1.0 running on ws://127.0.0.1:${this.PORT}`);
-                    this.log(`📝 Log file: ${this.logPath}`);
-                    this.log(`💻 Platform: ${os.platform()} ${os.arch()}`);
-                    this.log(`🧾 Demo barcode: ${this.DEMO_BARCODE}`);
+                    this.log(`AaravPOS Print Server v1.2.0 running on ws://127.0.0.1:${this.PORT}`);
+                    this.log(`Log file: ${this.logPath}`);
+                    this.log(`Platform: ${os.platform()} ${os.arch()}`);
+                    this.log(`Demo barcode: ${this.DEMO_BARCODE}`);
+                    this.log(`Paper usage optimized for thermal printers`);
                     resolve();
                 });
 
                 this.wss.on('error', (error) => {
-                    this.log(`❌ Server error: ${error.message}`);
+                    this.log(`Server error: ${error.message}`);
                     reject(error);
                 });
 
@@ -679,7 +690,7 @@ TEST PRINT SUCCESSFUL
         return new Promise((resolve) => {
             if (this.wss) {
                 this.wss.close(() => {
-                    this.log('🛑 Print server stopped');
+                    this.log('Print server stopped');
                     resolve();
                 });
             } else {
@@ -695,8 +706,9 @@ TEST PRINT SUCCESSFUL
             connections: this.wss ? this.wss.clients.size : 0,
             logPath: this.logPath,
             platform: os.platform(),
-            version: '1.1.0',
-            demoBarcode: this.DEMO_BARCODE
+            version: '1.2.0',
+            demoBarcode: this.DEMO_BARCODE,
+            paperOptimized: true
         };
     }
 
