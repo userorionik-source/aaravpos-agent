@@ -41,7 +41,7 @@ class PrintServer {
     /* ============================
        ESC/POS BUFFER BUILDERS - OPTIMIZED FOR PAPER SAVING
     ============================ */
-    
+
     // Simple text buffer (for print_text) - OPTIMIZED
     buildBuffer(text, openDrawer = false) {
         const ESC = 0x1B;
@@ -80,7 +80,7 @@ class PrintServer {
 
         // Center alignment for barcode
         buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
-        
+
         // Add title with minimal spacing
         const title = "AARAVPOS - BARCODE ONLY\n";
         buffers.push(Buffer.from(title, 'utf8'));
@@ -98,7 +98,7 @@ class PrintServer {
         if (barcode.length % 2 !== 0) {
             barcodeData = barcode + ' '; // Make even
         }
-        
+
         buffers.push(Buffer.from([
             GS, 0x6B,
             0x49,          // CODE128
@@ -123,12 +123,6 @@ class PrintServer {
         return Buffer.concat(buffers);
     }
 
-    /**
-     * ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
-     * Prints receipt text + barcode extracted from the text
-     * If no barcode in text, uses demo barcode as fallback
-     * OPTIMIZED: Reduced excessive spacing, minimal line feeds
-     */
     buildCombinedReceiptBuffer(receiptText, barcode) {
         const ESC = 0x1B;
         const GS = 0x1D;
@@ -139,11 +133,14 @@ class PrintServer {
         // Initialize printer
         buffers.push(Buffer.from([ESC, 0x40]));
 
-        // Print receipt text (with proper encoding)
+        // Parse text line by line
         const textLines = receiptText.split('\n');
+        let skipNextLine = false;
         let previousLineWasEmpty = false;
-        
-        for (let line of textLines) {
+
+        for (let i = 0; i < textLines.length; i++) {
+            const line = textLines[i];
+
             // Handle empty lines - only add ONE empty line even if multiple consecutive
             if (line.trim() === '') {
                 if (!previousLineWasEmpty) {
@@ -152,51 +149,64 @@ class PrintServer {
                 }
                 continue;
             }
-            
+
             previousLineWasEmpty = false;
-            
-            // Print line
+
+            // Check if this line is "BARCODE"
+            if (line.trim() === 'BARCODE') {
+                // Add minimal separator before barcode
+                buffers.push(Buffer.from([LF]));
+
+                // Center alignment for barcode
+                buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
+
+                // Barcode configuration with optimized settings
+                buffers.push(Buffer.from([GS, 0x68, 60]));  // Height (reduced from 80)
+                buffers.push(Buffer.from([GS, 0x77, 2]));   // Width
+                buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
+
+                // Print barcode (use the provided barcode parameter)
+                let barcodeData = barcode;
+                if (barcode.length % 2 !== 0) {
+                    barcodeData = barcode + ' ';
+                }
+
+                buffers.push(Buffer.from([
+                    GS, 0x6B,
+                    0x49,          // CODE128
+                    barcodeData.length + 2
+                ]));
+                buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
+
+                // Single feed after barcode
+                buffers.push(Buffer.from([LF]));
+
+                // Reset alignment
+                buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
+
+                // Skip the next line (the barcode text value) since we just printed it as barcode
+                skipNextLine = true;
+
+                // Add separator after barcode
+                buffers.push(Buffer.from([LF]));
+                continue;
+            }
+
+            // Skip the line after BARCODE (the barcode value) since we already printed it
+            if (skipNextLine) {
+                skipNextLine = false;
+                continue;
+            }
+
+            // Print normal text line
             buffers.push(Buffer.from(line, 'utf8'));
             buffers.push(Buffer.from([LF]));
         }
 
-        // Add minimal separator before barcode
-        buffers.push(Buffer.from([LF]));
-        buffers.push(Buffer.from("--------------------------------\n", 'utf8'));
-
-        // Center alignment for barcode
-        buffers.push(Buffer.from([ESC, 0x61, 0x01])); // Center align
-
-        // Barcode configuration with optimized settings
-        buffers.push(Buffer.from([GS, 0x68, 60]));  // Height (reduced from 80)
-        buffers.push(Buffer.from([GS, 0x77, 2]));   // Width
-        buffers.push(Buffer.from([GS, 0x48, 2]));   // HRI below barcode
-
-        // Print barcode
-        let barcodeData = barcode;
-        if (barcode.length % 2 !== 0) {
-            barcodeData = barcode + ' ';
-        }
-        
-        buffers.push(Buffer.from([
-            GS, 0x6B,
-            0x49,          // CODE128
-            barcodeData.length + 2
-        ]));
-        buffers.push(Buffer.from(`{B${barcodeData}`, 'ascii'));
-
-        // Single feed after barcode (reduced from 2)
-        buffers.push(Buffer.from([LF]));
-
-        // Reset alignment
-        buffers.push(Buffer.from([ESC, 0x61, 0x00])); // Left align
-
         // Final minimal separator
         buffers.push(Buffer.from([LF]));
-        buffers.push(Buffer.from("===============================\n", 'utf8'));
-        buffers.push(Buffer.from("AaravPOS - Receipt\n", 'utf8'));
 
-        // Reduced feed lines before cut from 8 to 3
+        // Single cut at the end
         buffers.push(Buffer.from([ESC, 0x64, 3])); // Feed 3 lines (enough for cutter)
         buffers.push(Buffer.from([GS, 0x56, 0x00])); // Full cut
 
@@ -209,11 +219,11 @@ class PrintServer {
     extractBarcodeFromText(text) {
         const lines = text.split('\n').map(l => l.trim());
         const barcodeIndex = lines.findIndex(line => line === 'BARCODE');
-        
+
         if (barcodeIndex !== -1 && lines[barcodeIndex + 1]) {
             return lines[barcodeIndex + 1].trim();
         }
-        
+
         return this.DEMO_BARCODE; // Fallback to demo barcode
     }
 
@@ -593,7 +603,7 @@ TEST PRINT SUCCESSFUL
                                     try {
                                         let buffer;
                                         let barcodeToPrint = payload.barcode;
-                                        
+
                                         // ✅ SCENARIO 1: Print Barcode Only (from Print Barcode button)
                                         if (!payload.receiptText) {
                                             // Always use demo barcode for this scenario
@@ -606,7 +616,7 @@ TEST PRINT SUCCESSFUL
                                             // Extract barcode from receipt text if provided
                                             const extractedBarcode = this.extractBarcodeFromText(payload.receiptText);
                                             barcodeToPrint = extractedBarcode || payload.barcode;
-                                            
+
                                             buffer = this.buildCombinedReceiptBuffer(
                                                 payload.receiptText,
                                                 barcodeToPrint
