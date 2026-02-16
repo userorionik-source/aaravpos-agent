@@ -57,14 +57,19 @@ class PrintServer {
             Buffer.from([LF]),
             Buffer.from([LF])
         ];
-        
+
         if (openDrawer) {
             parts.push(DRAWER_KICK);
         }
-        
+
         Buffer.from([LF])
         parts.push(FEED_AND_CUT);
         return Buffer.concat(parts);
+    }
+
+    buildCashDrawerBuffer() {
+        const ESC = 0x1B;
+        return Buffer.from([ESC, 0x70, 0x00, 0x19, 0xFA]);
     }
 
     /**
@@ -610,14 +615,22 @@ TEST PRINT SUCCESSFUL
 
                                 case 'open_cash_drawer':
                                     try {
-                                        const buffer = this.buildBuffer('OPENING CASH DRAWER\n', true);
-                                        await this.printRaw(data.payload.printerName, buffer);
+                                        const { printerName } = data.payload || {};
+
+                                        if (!printerName) {
+                                            throw new Error('Printer name is required');
+                                        }
+
+                                        const buffer = this.buildCashDrawerBuffer();
+
+                                        await this.printRaw(printerName, buffer);
+
                                         ws.send(JSON.stringify({
                                             type: 'cash_drawer_response',
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: 'Cash drawer command sent'
+                                                message: `Cash drawer opened on ${printerName}`
                                             }
                                         }));
                                     } catch (error) {

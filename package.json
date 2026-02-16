@@ -1,6 +1,6 @@
 {
   "name": "aaravpos-agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AaravPOS Local Print & Cash Drawer Agent",
   "main": "main.js",
   "author": {
