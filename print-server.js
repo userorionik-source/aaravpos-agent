@@ -59,10 +59,13 @@ class PrintServer {
         ];
 
         if (openDrawer) {
+            // Add line feed before drawer kick for timing
+            parts.push(Buffer.from([LF]));
             parts.push(DRAWER_KICK);
+            // Add small delay buffer (additional line feeds to ensure drawer pulse is processed)
+            parts.push(Buffer.from([LF, LF]));
         }
 
-        Buffer.from([LF])
         parts.push(FEED_AND_CUT);
         return Buffer.concat(parts);
     }
@@ -73,7 +76,7 @@ class PrintServer {
     }
 
     /**
-     * ✅ SCENARIO 1: Print Barcode Only (from 🧾 Print Barcode button)
+     * âœ… SCENARIO 1: Print Barcode Only (from ðŸ§¾ Print Barcode button)
      * Always prints the demo barcode: INV-20251118-035012-7AB50493
      * OPTIMIZED: Reduced excessive line feeds
      */
@@ -134,7 +137,7 @@ class PrintServer {
     }
 
     /**
- * ✅ SCENARIO 2: Print Combined Receipt (from 🖨️ Print Text button)
+ * âœ… SCENARIO 2: Print Combined Receipt (from ðŸ–¨ï¸ Print Text button)
  * Prints receipt text + barcode extracted from the text
  * If only barcode present, prints just the barcode
  * FIXED: Removes extra separators when only barcode
@@ -551,16 +554,18 @@ class PrintServer {
 
                                 case 'print_text':
                                     try {
-                                        const buffer = this.buildBuffer(data.payload.text, false);
+                                        const openDrawer = data.payload.openDrawer || false;
+                                        const buffer = this.buildBuffer(data.payload.text, openDrawer);
                                         await this.printRaw(data.payload.printerName, buffer);
                                         ws.send(JSON.stringify({
                                             type: 'print_response',
                                             requestId: data.requestId,
                                             payload: {
                                                 success: true,
-                                                message: `Printed text to ${data.payload.printerName}`,
+                                                message: `Printed text to ${data.payload.printerName}${openDrawer ? ' and opened cash drawer' : ''}`,
                                                 barcodeUsed: null,
-                                                paperSaved: true
+                                                paperSaved: true,
+                                                drawerOpened: openDrawer
                                             }
                                         }));
                                     } catch (error) {
@@ -665,14 +670,14 @@ TEST PRINT SUCCESSFUL
                                         let buffer;
                                         let barcodeToPrint = payload.barcode;
 
-                                        // ✅ SCENARIO 1: Print Barcode Only (from Print Barcode button)
+                                        // âœ… SCENARIO 1: Print Barcode Only (from Print Barcode button)
                                         if (!payload.receiptText) {
                                             // Always use demo barcode for this scenario
                                             barcodeToPrint = this.DEMO_BARCODE;
                                             buffer = this.buildBarcodeOnlyBuffer(barcodeToPrint);
                                             this.log(`Printing barcode only: ${barcodeToPrint}`);
                                         }
-                                        // ✅ SCENARIO 2: Print Combined Receipt (from Print Text button)
+                                        // âœ… SCENARIO 2: Print Combined Receipt (from Print Text button)
                                         else {
                                             // Extract barcode from receipt text if provided
                                             const extractedBarcode = this.extractBarcodeFromText(payload.receiptText);
